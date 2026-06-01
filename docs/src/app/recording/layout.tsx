@@ -5,4 +5,3 @@ export const metadata = pageMetadata("recording");
 export default function Layout({ children }: { children: React.ReactNode }) {
   return children;
 }
-

@@ -4216,15 +4216,27 @@ async fn handle_recording_restart(cmd: &Value, state: &mut DaemonState) -> Resul
         .get("path")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'path' parameter")?;
+    let recording_url = cmd
+        .get("url")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from);
 
     let _ = state.stop_recording_task().await;
     let result = recording::recording_restart(&mut state.recording_state, path)?;
 
-    if let Some(ref browser) = state.browser {
+    let recording_target = if let Some(ref mut browser) = state.browser {
+        if let Some(url) = recording_url {
+            browser.navigate(&url, WaitUntil::Load).await?;
+        }
         let session_id = browser.active_session_id()?.to_string();
-        state
-            .start_recording_task(browser.client.clone(), session_id)
-            .await?;
+        Some((browser.client.clone(), session_id))
+    } else {
+        None
+    };
+
+    if let Some((client, session_id)) = recording_target {
+        state.start_recording_task(client, session_id).await?;
     }
 
     Ok(result)
@@ -6856,6 +6868,69 @@ fn browser_metadata_from_version(version: &Value) -> Option<Value> {
 // Fetch interception resolver (domain filter + routes + origin headers)
 // ---------------------------------------------------------------------------
 
+fn collapse_wildcards(pattern: &str) -> String {
+    let mut out = String::with_capacity(pattern.len());
+    let mut last_was_star = false;
+    for ch in pattern.chars() {
+        if ch == '*' {
+            if !last_was_star {
+                out.push(ch);
+            }
+            last_was_star = true;
+        } else {
+            out.push(ch);
+            last_was_star = false;
+        }
+    }
+    out
+}
+
+fn route_url_matches(pattern: &str, url: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    if !pattern.contains('*') {
+        return url.contains(pattern);
+    }
+
+    let pattern = collapse_wildcards(pattern);
+    let parts: Vec<&str> = pattern.split('*').filter(|p| !p.is_empty()).collect();
+    if parts.is_empty() {
+        return true;
+    }
+
+    let anchored_start = !pattern.starts_with('*');
+    let anchored_end = !pattern.ends_with('*');
+    let mut pos = 0usize;
+    let mut idx = 0usize;
+
+    if anchored_start {
+        let first = parts[0];
+        if !url.starts_with(first) {
+            return false;
+        }
+        pos = first.len();
+        idx = 1;
+    }
+
+    while idx < parts.len() {
+        let part = parts[idx];
+        let Some(found) = url[pos..].find(part) else {
+            return false;
+        };
+        pos += found + part.len();
+        idx += 1;
+    }
+
+    if anchored_end {
+        if let Some(last) = parts.last() {
+            return url.ends_with(last);
+        }
+    }
+
+    true
+}
+
 async fn resolve_fetch_paused(
     client: &CdpClient,
     domain_filter: Option<&DomainFilter>,
@@ -6938,18 +7013,7 @@ async fn resolve_fetch_paused(
 
     // Route matching
     for route in routes {
-        let url_matches = if route.url_pattern == "*" {
-            true
-        } else if route.url_pattern.contains('*') {
-            let parts: Vec<&str> = route.url_pattern.split('*').collect();
-            if parts.len() == 2 {
-                paused.url.starts_with(parts[0]) && paused.url.ends_with(parts[1])
-            } else {
-                paused.url.contains(&route.url_pattern)
-            }
-        } else {
-            paused.url.contains(&route.url_pattern)
-        };
+        let url_matches = route_url_matches(&route.url_pattern, &paused.url);
 
         let resource_type_matches = route.resource_types.is_empty()
             || route
@@ -7059,7 +7123,7 @@ async fn build_fetch_patterns(state: &DaemonState) -> Vec<Value> {
     let routes = state.routes.read().await;
     let mut patterns: Vec<Value> = routes
         .iter()
-        .map(|r| json!({ "urlPattern": r.url_pattern }))
+        .map(|r| json!({ "urlPattern": collapse_wildcards(&r.url_pattern) }))
         .collect();
     let has_domain_filter = state.domain_filter.read().await.is_some();
     let has_origin_headers = !state.origin_headers.read().await.is_empty();
@@ -8901,6 +8965,47 @@ mod tests {
         let patterns = build_fetch_patterns(&state).await;
         assert_eq!(patterns.len(), 1);
         assert_eq!(patterns[0]["urlPattern"], "https://example.com/*");
+    }
+
+    #[test]
+    fn test_route_url_matches_multi_wildcard_patterns() {
+        assert!(route_url_matches(
+            "**/api/users",
+            "https://app.example.com/v1/api/users"
+        ));
+        assert!(route_url_matches(
+            "**/analytics/**",
+            "https://cdn.example.com/analytics/event.js"
+        ));
+        assert!(route_url_matches(
+            "https://example.com/*/users",
+            "https://example.com/api/users"
+        ));
+        assert!(!route_url_matches(
+            "**/api/users",
+            "https://app.example.com/v1/api/users/42"
+        ));
+        assert!(!route_url_matches(
+            "**/analytics/**",
+            "https://cdn.example.com/static/event.js"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_build_fetch_patterns_collapses_repeated_wildcards() {
+        let state = DaemonState::new();
+        {
+            let mut routes = state.routes.write().await;
+            routes.push(super::RouteEntry {
+                url_pattern: "**/api/users".to_string(),
+                response: None,
+                abort: true,
+                resource_types: Vec::new(),
+            });
+        }
+        let patterns = build_fetch_patterns(&state).await;
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(patterns[0]["urlPattern"], "*/api/users");
     }
 
     #[test]

@@ -5,4 +5,3 @@ export const metadata = pageMetadata("init-scripts");
 export default function Layout({ children }: { children: React.ReactNode }) {
   return children;
 }
-
