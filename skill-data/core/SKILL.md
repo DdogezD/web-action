@@ -288,8 +288,8 @@ agent-browser network har stop /tmp/trace.har
 ### Record a video of the workflow
 
 ```bash
-agent-browser record start demo.webm
 agent-browser open https://example.com
+agent-browser record start demo.webm
 agent-browser snapshot -i
 agent-browser click @e3
 agent-browser record stop

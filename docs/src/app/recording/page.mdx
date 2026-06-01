@@ -5,18 +5,18 @@ Use `record` to capture browser automation as a WebM video for debugging, CI evi
 ## Basic workflow
 
 ```bash
-agent-browser record start ./demo.webm
-
 agent-browser open https://example.com
+agent-browser record start ./demo.webm
 agent-browser snapshot -i
 agent-browser click @e1
 
 agent-browser record stop
 ```
 
-`record start` can also navigate immediately:
+After launching a session, `record start` can also navigate immediately:
 
 ```bash
+agent-browser open
 agent-browser record start ./demo.webm https://example.com
 ```
 
@@ -47,8 +47,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-agent-browser record start "./artifacts/login-flow.webm"
 agent-browser open https://app.example.com/login
+agent-browser record start "./artifacts/login-flow.webm"
 agent-browser snapshot -i
 agent-browser fill @e1 "demo@example.com"
 agent-browser fill @e2 "password"
@@ -63,8 +63,8 @@ Keep recordings as CI artifacts when browser failures are hard to diagnose from 
 Add small waits when the video is meant for a person to watch:
 
 ```bash
-agent-browser record start ./checkout.webm
 agent-browser open https://shop.example.com
+agent-browser record start ./checkout.webm
 agent-browser wait 500
 agent-browser click @e4
 agent-browser wait 500

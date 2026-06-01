@@ -4222,6 +4222,15 @@ async fn handle_recording_restart(cmd: &Value, state: &mut DaemonState) -> Resul
         .filter(|s| !s.is_empty())
         .map(String::from);
 
+    let _ = state.stop_recording_task().await;
+    let previous_path = if state.recording_state.active {
+        recording::recording_stop(&mut state.recording_state)
+            .ok()
+            .and_then(|v| v.get("path").and_then(|p| p.as_str()).map(String::from))
+    } else {
+        None
+    };
+
     let recording_target = if let Some(ref mut browser) = state.browser {
         if let Some(url) = recording_url {
             browser.navigate(&url, WaitUntil::Load).await?;
@@ -4232,14 +4241,17 @@ async fn handle_recording_restart(cmd: &Value, state: &mut DaemonState) -> Resul
         None
     };
 
-    let _ = state.stop_recording_task().await;
-    let result = recording::recording_restart(&mut state.recording_state, path)?;
+    recording::recording_start(&mut state.recording_state, path)?;
 
     if let Some((client, session_id)) = recording_target {
         state.start_recording_task(client, session_id).await?;
     }
 
-    Ok(result)
+    Ok(json!({
+        "restarted": true,
+        "previousPath": previous_path,
+        "path": path,
+    }))
 }
 
 async fn handle_pdf(cmd: &Value, state: &DaemonState) -> Result<Value, String> {

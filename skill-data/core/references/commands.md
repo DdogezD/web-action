@@ -109,6 +109,7 @@ Pass `--hide-scrollbars false` when launching to keep native scrollbars visible.
 ## Video Recording
 
 ```bash
+agent-browser open https://example.com     # Launch a browser session first
 agent-browser record start ./demo.webm    # Start recording
 agent-browser click @e1                   # Perform actions
 agent-browser record stop                 # Stop and save video
