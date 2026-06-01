@@ -253,13 +253,11 @@ Pass `--hide-scrollbars false` when launching to keep native scrollbars visible.
 ```bash
 agent-browser tab                      # list open tabs (with stable tabId)
 agent-browser tab new https://docs...  # open a new tab (and switch to it)
-agent-browser tab 2                    # switch to tab 2
-agent-browser tab close 2              # close tab 2
+agent-browser tab t2                   # switch to tab t2
+agent-browser tab close t2             # close tab t2
 ```
 
-Stable `tabId`s mean `tab 2` points at the same tab across commands even
-when other tabs open or close. After switching, refs from a prior snapshot
-on a different tab no longer apply — re-snapshot.
+Stable `tabId`s mean `t2` points at the same tab across commands even when other tabs open or close. After switching, refs from a prior snapshot on a different tab no longer apply — re-snapshot.
 
 ### Run multiple browsers in parallel
 
