@@ -25,7 +25,8 @@ use windows_sys::Win32::System::Threading::OpenProcess;
 
 use commands::{gen_id, parse_command, ParseError};
 use connection::{
-    cleanup_stale_files, ensure_daemon, get_socket_dir, is_pid_alive, send_command, walk_daemons,
+    cleanup_stale_files, daemon_unreachable, ensure_daemon, get_socket_dir, is_pid_alive,
+    send_command, walk_daemons,
     DaemonOptions,
 };
 use flags::{clean_args, parse_flags, Flags};
@@ -1228,7 +1229,19 @@ fn main() {
 
     let output_opts = OutputOptions::from_flags(&flags);
 
-    match send_command(cmd.clone(), &flags.session) {
+    // ensure_daemon no longer pays a settle-sleep on every command, so a
+    // daemon that exited right after its liveness check surfaces here as an
+    // unreachable socket. Respawn once and retry before reporting failure.
+    let first_attempt = send_command(cmd.clone(), &flags.session);
+    let send_result = match first_attempt {
+        Err(ref e) if daemon_unreachable(e) => match ensure_daemon(&flags.session, &daemon_opts) {
+            Ok(_) => send_command(cmd.clone(), &flags.session),
+            Err(_) => first_attempt,
+        },
+        other => other,
+    };
+
+    match send_result {
         Ok(resp) => {
             let success = resp.success;
             // Handle interactive confirmation
