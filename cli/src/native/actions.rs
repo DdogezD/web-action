@@ -3028,8 +3028,7 @@ async fn handle_wait(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
                 }
             },
             None => {
-                wait_for_selector(&mgr.client, &session_id, selector, state_str, timeout_ms)
-                    .await?
+                wait_for_selector(&mgr.client, &session_id, selector, state_str, timeout_ms).await?
             }
         }
         return Ok(json!({ "waited": "selector", "selector": selector }));
@@ -3329,7 +3328,8 @@ async fn wait_for_selector_in_frame(
     state: &str,
     timeout_ms: u64,
 ) -> Result<(), String> {
-    let owner_object_id = super::element::frame_owner_object_id(client, session_id, frame_id).await?;
+    let owner_object_id =
+        super::element::frame_owner_object_id(client, session_id, frame_id).await?;
     let sel = serde_json::to_string(selector).unwrap_or_default();
     let check = match state {
         "attached" => format!("!!doc.querySelector({sel})"),

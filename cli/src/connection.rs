@@ -812,6 +812,7 @@ pub fn send_command(cmd: Value, session: &str) -> Result<Response, String> {
 /// - EAGAIN/EWOULDBLOCK (os error 35 on macOS, 11 on Linux)
 /// - EOF errors (daemon closed connection before responding)
 /// - Connection reset/broken pipe (daemon crashed or restarting)
+///
 /// Connection refused / missing socket are NOT transient: no daemon is
 /// listening, so backing off cannot help. Callers use daemon_unreachable()
 /// to respawn via ensure_daemon and retry once instead.

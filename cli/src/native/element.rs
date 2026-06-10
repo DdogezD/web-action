@@ -250,7 +250,10 @@ async fn resolve_center_in_same_process_frame(
     let y = value.and_then(|v| v.get("y")).and_then(|v| v.as_f64());
     match (x, y) {
         (Some(x), Some(y)) => Ok((x, y)),
-        _ => Err(format!("Element not found in the selected frame: {}", selector)),
+        _ => Err(format!(
+            "Element not found in the selected frame: {}",
+            selector
+        )),
     }
 }
 

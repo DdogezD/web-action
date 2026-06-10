@@ -26,8 +26,7 @@ use windows_sys::Win32::System::Threading::OpenProcess;
 use commands::{gen_id, parse_command, ParseError};
 use connection::{
     cleanup_stale_files, daemon_unreachable, ensure_daemon, get_socket_dir, is_pid_alive,
-    send_command, walk_daemons,
-    DaemonOptions,
+    send_command, walk_daemons, DaemonOptions,
 };
 use flags::{clean_args, parse_flags, Flags};
 use install::run_install;
