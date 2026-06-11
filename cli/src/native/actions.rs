@@ -2497,6 +2497,15 @@ async fn evaluate_in_same_process_frame(
             )
             .await
         }
+        Err(e) if e.contains("has already been declared") => {
+            evaluate_in_same_process_frame_once(
+                client,
+                session_id,
+                frame_id,
+                &format!("{{ {script} }}"),
+            )
+            .await
+        }
         Err(e) if e.contains("await is only valid") => {
             evaluate_in_same_process_frame_with_top_level_await(
                 client, session_id, frame_id, script,

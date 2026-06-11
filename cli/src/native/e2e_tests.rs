@@ -6085,6 +6085,25 @@ async fn e2e_frame_scoped_text_wait_eval_and_function_wait() {
         "top-level await should work inside a selected same-process iframe"
     );
 
+    // Re-declaring the same const across evals must work in a selected
+    // same-process iframe too, not just the main frame and OOPIF sessions.
+    let resp = execute_command(
+        &json!({ "id": "8c", "action": "evaluate",
+                 "script": "const el = document.getElementById('msg'); el.id" }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+    assert_eq!(get_data(&resp)["result"], "msg");
+    let resp = execute_command(
+        &json!({ "id": "8d", "action": "evaluate",
+                 "script": "const el = document.getElementById('msg'); el.textContent" }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+    assert_eq!(get_data(&resp)["result"], "frame-ready");
+
     // Back on the main frame the flag must not leak.
     let resp = execute_command(&json!({ "id": "9", "action": "mainframe" }), &mut state).await;
     assert_success(&resp);
