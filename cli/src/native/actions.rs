@@ -1202,6 +1202,19 @@ fn plugins_from_command_or_env(cmd: &Value) -> Vec<crate::plugins::PluginConfig>
         .unwrap_or_else(crate::plugins::plugins_from_env)
 }
 
+fn provider_plugin_launch_options_from_command(cmd: &Value) -> Value {
+    let mut options = serde_json::Map::new();
+    if let Some(headless) = cmd.get("headless").and_then(|v| v.as_bool()) {
+        options.insert("headed".to_string(), json!(!headless));
+    }
+    for key in ["engine", "userAgent", "colorScheme"] {
+        if let Some(value) = cmd.get(key) {
+            options.insert(key.to_string(), value.clone());
+        }
+    }
+    Value::Object(options)
+}
+
 fn skip_launch_action(action: &str) -> bool {
     matches!(
         action,
@@ -2219,8 +2232,12 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
             }
             _ => {
                 let command_plugins = plugins_from_command_or_env(cmd);
-                let conn =
-                    providers::connect_provider_with_plugins(provider, &command_plugins).await?;
+                let conn = providers::connect_provider_with_plugins_and_options(
+                    provider,
+                    &command_plugins,
+                    Some(provider_plugin_launch_options_from_command(cmd)),
+                )
+                .await?;
                 let provider_metadata = conn.metadata.clone();
 
                 let ws_headers = if provider.eq_ignore_ascii_case("agentcore") {
