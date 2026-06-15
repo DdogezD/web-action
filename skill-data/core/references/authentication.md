@@ -201,7 +201,7 @@ agent-browser plugin run captcha captcha.solve --payload '{"siteKey":"...","url"
 ```
 
 `plugin run` is for `command.run` and custom capabilities. Core capabilities
-use their dedicated command paths.
+and protocol request types use their dedicated command paths.
 
 Use `--url`, `--username-selector`, `--password-selector`, and `--submit-selector` on `auth login` to override plugin-provided metadata for the current login only.
 

@@ -185,7 +185,7 @@ Without a manifest, users must pass `--capability` flags during add.
   </tbody>
 </table>
 
-Plugins may declare custom capabilities such as `captcha.solve`. `plugin run` can invoke `command.run` and custom capabilities, but it cannot invoke core capabilities directly. Use the dedicated command path for `credential.read`, `browser.provider`, and `launch.mutate`.
+Plugins may declare custom capabilities such as `captcha.solve`. `plugin run` can invoke `command.run` and custom capabilities, but it cannot invoke core capabilities or protocol request types directly. Use the dedicated command path for `credential.read`, `browser.provider`, and `launch.mutate`.
 
 ## Minimal plugin
 

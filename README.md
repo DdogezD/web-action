@@ -734,7 +734,7 @@ Use a generic plugin command for domain-specific tools such as CAPTCHA solvers:
 agent-browser plugin run captcha captcha.solve --payload '{"siteKey":"...","url":"https://example.com"}'
 ```
 
-The protocol request always includes `protocol`, `type`, `capability`, and `request`. A credential plugin receives `credential.resolve`, a browser provider receives `browser.launch`, a launch mutator receives `launch.mutate`, and generic commands receive the supplied request type. `plugin run` is for `command.run` and custom capabilities; core capabilities use their dedicated command paths. agent-browser keeps browser automation, redaction-sensitive output, and policy enforcement in core.
+The protocol request always includes `protocol`, `type`, `capability`, and `request`. A credential plugin receives `credential.resolve`, a browser provider receives `browser.launch`, a launch mutator receives `launch.mutate`, and generic commands receive the supplied request type. `plugin run` is for `command.run` and custom capabilities; core capabilities and protocol request types use their dedicated command paths. agent-browser keeps browser automation, redaction-sensitive output, and policy enforcement in core.
 
 Gate plugin access by capability action:
 

@@ -823,10 +823,10 @@ pub fn run_plugin_command(args: &[String], plugins: &[PluginConfig], json_output
                 print_plugin_error(&format!("Plugin '{}' is not configured", name), json_output);
                 std::process::exit(1);
             };
-            if is_core_capability(request_type) {
+            if is_core_plugin_entrypoint(request_type) {
                 print_plugin_error(
                     &format!(
-                        "plugin run cannot invoke core capability '{}'; use the dedicated agent-browser command path",
+                        "plugin run cannot invoke core plugin entrypoint '{}'; use the dedicated agent-browser command path",
                         request_type
                     ),
                     json_output,
@@ -889,10 +889,16 @@ fn parse_run_payload(args: &[String]) -> Result<serde_json::Value, String> {
     Ok(payload)
 }
 
-fn is_core_capability(capability: &str) -> bool {
+fn is_core_plugin_entrypoint(entrypoint: &str) -> bool {
     matches!(
-        capability,
-        CAPABILITY_CREDENTIAL_READ | CAPABILITY_BROWSER_PROVIDER | CAPABILITY_LAUNCH_MUTATE
+        entrypoint,
+        CAPABILITY_CREDENTIAL_READ
+            | CAPABILITY_BROWSER_PROVIDER
+            | CAPABILITY_LAUNCH_MUTATE
+            | TYPE_PLUGIN_MANIFEST
+            | "credential.resolve"
+            | "browser.launch"
+            | "browser.close"
     )
 }
 
@@ -973,12 +979,17 @@ mod tests {
     }
 
     #[test]
-    fn plugin_run_rejects_core_capabilities() {
-        assert!(is_core_capability(CAPABILITY_CREDENTIAL_READ));
-        assert!(is_core_capability(CAPABILITY_BROWSER_PROVIDER));
-        assert!(is_core_capability(CAPABILITY_LAUNCH_MUTATE));
-        assert!(!is_core_capability(CAPABILITY_COMMAND_RUN));
-        assert!(!is_core_capability("captcha.solve"));
+    fn plugin_run_rejects_core_entrypoints() {
+        assert!(is_core_plugin_entrypoint(CAPABILITY_CREDENTIAL_READ));
+        assert!(is_core_plugin_entrypoint(CAPABILITY_BROWSER_PROVIDER));
+        assert!(is_core_plugin_entrypoint(CAPABILITY_LAUNCH_MUTATE));
+        assert!(is_core_plugin_entrypoint("credential.resolve"));
+        assert!(is_core_plugin_entrypoint("browser.launch"));
+        assert!(is_core_plugin_entrypoint("browser.close"));
+        assert!(is_core_plugin_entrypoint("launch.mutate"));
+        assert!(is_core_plugin_entrypoint(TYPE_PLUGIN_MANIFEST));
+        assert!(!is_core_plugin_entrypoint(CAPABILITY_COMMAND_RUN));
+        assert!(!is_core_plugin_entrypoint("captcha.solve"));
     }
 
     #[test]

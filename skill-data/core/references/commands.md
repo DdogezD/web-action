@@ -323,7 +323,7 @@ Other capabilities use the same protocol:
 - `command.run`: `agent-browser plugin run <name> <type> --payload <json>`
 
 `plugin run` is for `command.run` and custom capabilities. Core capabilities
-use their dedicated command paths.
+and protocol request types use their dedicated command paths.
 
 ## State Management
 

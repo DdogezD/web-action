@@ -353,7 +353,7 @@ Other plugin capabilities use the same protocol:
 - `launch.mutate`: append local launch args, extensions, or init scripts before Chrome starts
 - `command.run`: run arbitrary namespaced requests through `agent-browser plugin run`
 
-`plugin run` is for `command.run` and custom capabilities. Core capabilities use their dedicated command paths.
+`plugin run` is for `command.run` and custom capabilities. Core capabilities and protocol request types use their dedicated command paths.
 
 ```bash
 echo "pass" | agent-browser auth save github --url https://github.com/login --username user --password-stdin

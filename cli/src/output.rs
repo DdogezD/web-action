@@ -3042,9 +3042,9 @@ Capabilities:
   launch.mutate            Append local launch args, extensions, or init scripts
   command.run              Accept arbitrary namespaced plugin requests
 
-Core capabilities use dedicated command paths. Use auth login for
-credential.read, --provider for browser.provider, and a local launch for
-launch.mutate.
+Core capabilities and protocol request types use dedicated command paths.
+Use auth login for credential.read, --provider for browser.provider, and
+a local launch for launch.mutate.
 
 Example config:
   {{

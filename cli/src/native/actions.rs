@@ -61,6 +61,7 @@ const AUTH_LOGIN_PREFERRED_SELECTOR_WINDOW_MS: u64 = 5_000;
 pub struct PendingConfirmation {
     pub action: String,
     pub cmd: Value,
+    approved_actions: Vec<String>,
 }
 
 /// Captured request/response metadata used to export HAR 1.2 files.
@@ -270,6 +271,8 @@ pub struct DaemonState {
     pub viewport: Option<(i32, i32, f64, bool)>,
     /// Init script sources returned by launch mutator plugins for this launch.
     pub plugin_init_scripts: Vec<String>,
+    /// Actions already approved while replaying a confirmed command.
+    confirmed_policy_actions: HashSet<String>,
 }
 
 impl DaemonState {
@@ -329,6 +332,7 @@ impl DaemonState {
                 .unwrap_or(25_000),
             viewport: None,
             plugin_init_scripts: Vec::new(),
+            confirmed_policy_actions: HashSet::new(),
         }
     }
 
@@ -1229,6 +1233,8 @@ fn skip_launch_action(action: &str) -> bool {
             | "auth_show"
             | "auth_delete"
             | "auth_list"
+            | "confirm"
+            | "deny"
             | "state_list"
             | "state_show"
             | "state_clear"
@@ -1317,6 +1323,7 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
     // Hot-reload and check action policy
     if let Some(ref mut policy) = state.policy {
         let _ = policy.reload();
+        let mut confirmation_required: Option<String> = None;
         for policy_action in &policy_actions {
             match policy.check(policy_action) {
                 PolicyResult::Allow => {}
@@ -1327,17 +1334,25 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
                     );
                 }
                 PolicyResult::RequiresConfirmation => {
-                    state.pending_confirmation = Some(PendingConfirmation {
-                        action: policy_action.to_string(),
-                        cmd: cmd.clone(),
-                    });
-                    return json!({
-                        "id": id,
-                        "success": true,
-                        "data": { "confirmation_required": true, "action": policy_action },
-                    });
+                    if !state.confirmed_policy_actions.contains(policy_action)
+                        && confirmation_required.is_none()
+                    {
+                        confirmation_required = Some(policy_action.to_string());
+                    }
                 }
             }
+        }
+        if let Some(policy_action) = confirmation_required {
+            state.pending_confirmation = Some(PendingConfirmation {
+                action: policy_action.clone(),
+                cmd: cmd.clone(),
+                approved_actions: state.confirmed_policy_actions.iter().cloned().collect(),
+            });
+            return json!({
+                "id": id,
+                "success": true,
+                "data": { "confirmation_required": true, "action": policy_action },
+            });
         }
     }
 
@@ -1345,10 +1360,14 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
     if action != "confirm" && action != "deny" {
         if let Some(ref ca) = state.confirm_actions {
             for policy_action in &policy_actions {
+                if state.confirmed_policy_actions.contains(policy_action) {
+                    continue;
+                }
                 if ca.requires_confirmation(policy_action) {
                     state.pending_confirmation = Some(PendingConfirmation {
                         action: policy_action.to_string(),
                         cmd: cmd.clone(),
+                        approved_actions: state.confirmed_policy_actions.iter().cloned().collect(),
                     });
                     return json!({
                         "id": id,
@@ -8167,12 +8186,16 @@ async fn handle_confirm(_cmd: &Value, state: &mut DaemonState) -> Result<Value, 
         .take()
         .ok_or("No pending confirmation")?;
 
-    // Temporarily remove policy and confirm_actions to avoid re-triggering confirmation
-    let policy = state.policy.take();
-    let confirm_actions = state.confirm_actions.take();
+    let mut approved_actions = pending.approved_actions.clone();
+    if !approved_actions.iter().any(|a| a == &pending.action) {
+        approved_actions.push(pending.action.clone());
+    }
+    let previous_confirmed = std::mem::replace(
+        &mut state.confirmed_policy_actions,
+        approved_actions.into_iter().collect(),
+    );
     let result = Box::pin(execute_command(&pending.cmd, state)).await;
-    state.policy = policy;
-    state.confirm_actions = confirm_actions;
+    state.confirmed_policy_actions = previous_confirmed;
 
     Ok(json!({ "confirmed": true, "action": pending.action, "result": result }))
 }
@@ -8698,6 +8721,94 @@ mod tests {
 
         assert!(actions.contains(&"plugin:browserbox:browser.provider".to_string()));
         assert!(!actions.contains(&"plugin:stealth:launch.mutate".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_policy_denies_plugin_action_before_base_confirmation() {
+        let guard = EnvGuard::new(&["AGENT_BROWSER_PROVIDER"]);
+        guard.remove("AGENT_BROWSER_PROVIDER");
+        let dir = tempfile::tempdir().unwrap();
+        let policy_path = dir.path().join("policy.json");
+        fs::write(
+            &policy_path,
+            r#"{"confirm":["navigate"],"deny":["plugin:stealth:launch.mutate"]}"#,
+        )
+        .unwrap();
+
+        let mut state = DaemonState::new();
+        state.policy = Some(ActionPolicy::load(policy_path.to_str().unwrap()).unwrap());
+        let cmd = json!({
+            "action": "navigate",
+            "id": "policy-plugin-deny",
+            "url": "https://example.com",
+            "plugins": [
+                {
+                    "name": "stealth",
+                    "command": "agent-browser-plugin-stealth",
+                    "capabilities": ["launch.mutate"]
+                }
+            ]
+        });
+
+        let resp = execute_command(&cmd, &mut state).await;
+
+        assert_eq!(resp["success"], false);
+        assert!(resp["error"]
+            .as_str()
+            .unwrap()
+            .contains("plugin:stealth:launch.mutate"));
+        assert!(state.pending_confirmation.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_confirm_rechecks_unapproved_plugin_action() {
+        let guard = EnvGuard::new(&["AGENT_BROWSER_PROVIDER"]);
+        guard.remove("AGENT_BROWSER_PROVIDER");
+        let dir = tempfile::tempdir().unwrap();
+        let policy_path = dir.path().join("policy.json");
+        fs::write(
+            &policy_path,
+            r#"{"confirm":["navigate","plugin:stealth:launch.mutate"]}"#,
+        )
+        .unwrap();
+
+        let mut state = DaemonState::new();
+        state.policy = Some(ActionPolicy::load(policy_path.to_str().unwrap()).unwrap());
+        let cmd = json!({
+            "action": "navigate",
+            "id": "policy-plugin-confirm",
+            "url": "https://example.com",
+            "plugins": [
+                {
+                    "name": "stealth",
+                    "command": "agent-browser-plugin-stealth",
+                    "capabilities": ["launch.mutate"]
+                }
+            ]
+        });
+
+        let first = execute_command(&cmd, &mut state).await;
+        assert_eq!(first["data"]["confirmation_required"], true);
+        assert_eq!(first["data"]["action"], "navigate");
+
+        let second = execute_command(
+            &json!({ "id": "policy-plugin-confirm-2", "action": "confirm" }),
+            &mut state,
+        )
+        .await;
+
+        assert_eq!(second["success"], true);
+        assert_eq!(
+            second["data"]["result"]["data"]["confirmation_required"],
+            true
+        );
+        assert_eq!(
+            second["data"]["result"]["data"]["action"],
+            "plugin:stealth:launch.mutate"
+        );
+        let pending = state.pending_confirmation.as_ref().unwrap();
+        assert_eq!(pending.action, "plugin:stealth:launch.mutate");
+        assert!(pending.approved_actions.iter().any(|a| a == "navigate"));
     }
 
     #[tokio::test]
