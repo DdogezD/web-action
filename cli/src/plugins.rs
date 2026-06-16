@@ -18,7 +18,7 @@ pub const CAPABILITY_BROWSER_PROVIDER: &str = "browser.provider";
 pub const CAPABILITY_LAUNCH_MUTATE: &str = "launch.mutate";
 pub const CAPABILITY_COMMAND_RUN: &str = "command.run";
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct PluginConfig {
     pub name: String,
@@ -27,18 +27,6 @@ pub struct PluginConfig {
     pub capabilities: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
-}
-
-impl Default for PluginConfig {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            command: String::new(),
-            args: Vec::new(),
-            capabilities: Vec::new(),
-            source: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -184,10 +172,8 @@ pub fn resolved_plugins_with_capability<'a>(
     let mut resolved = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for plugin in plugins.iter().rev() {
-        if seen.insert(plugin.name.as_str()) {
-            if plugin_has_capability(plugin, capability) {
-                resolved.push(plugin);
-            }
+        if seen.insert(plugin.name.as_str()) && plugin_has_capability(plugin, capability) {
+            resolved.push(plugin);
         }
     }
     resolved.reverse();
@@ -287,7 +273,7 @@ pub async fn resolve_credential_with_plugins(
     plugins: &[PluginConfig],
     request: CredentialResolveRequest<'_>,
 ) -> Result<ResolvedCredential, String> {
-    let plugin = find_plugin(&plugins, provider)
+    let plugin = find_plugin(plugins, provider)
         .ok_or_else(|| format!("Credential plugin '{}' is not configured", provider))?;
     let response = invoke_plugin(
         plugin,

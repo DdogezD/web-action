@@ -190,7 +190,7 @@ pub async fn connect_plugin_provider_with_plugins_and_options(
     plugins: &[crate::plugins::PluginConfig],
     launch_options: Option<Value>,
 ) -> Result<ProviderConnection, String> {
-    if crate::plugins::find_plugin(&plugins, provider_name).is_none() {
+    if crate::plugins::find_plugin(plugins, provider_name).is_none() {
         return Err(format!(
             "Unknown provider '{}'. Supported: browserbase, browserless, browser-use, kernel, agentcore, or a configured plugin with browser.provider",
             provider_name
