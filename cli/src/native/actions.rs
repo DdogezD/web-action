@@ -1247,7 +1247,11 @@ fn skip_launch_action(action: &str) -> bool {
     )
 }
 
-fn policy_actions_for_command(cmd: &Value, action: &str, state: &DaemonState) -> Vec<String> {
+fn policy_actions_for_command(
+    cmd: &Value,
+    action: &str,
+    needs_implicit_launch: bool,
+) -> Vec<String> {
     let mut actions = vec![action.to_string()];
     if action == "auth_login" {
         if let Some(provider) = cmd.get("credentialProvider").and_then(|v| v.as_str()) {
@@ -1273,7 +1277,7 @@ fn policy_actions_for_command(cmd: &Value, action: &str, state: &DaemonState) ->
         if local_launch {
             append_launch_mutator_policy_actions_for(&mut actions, &plugins);
         }
-    } else if !skip_launch_action(action) && state.browser.is_none() {
+    } else if !skip_launch_action(action) && needs_implicit_launch {
         let plugins = plugins_from_command_or_env(cmd);
         let provider_launch = env::var("AGENT_BROWSER_PROVIDER")
             .ok()
@@ -1290,7 +1294,6 @@ fn policy_actions_for_command(cmd: &Value, action: &str, state: &DaemonState) ->
 
 pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
     let action = cmd.get("action").and_then(|v| v.as_str()).unwrap_or("");
-    let policy_actions = policy_actions_for_command(cmd, action, state);
     let id = cmd
         .get("id")
         .and_then(|v| v.as_str())
@@ -1319,6 +1322,21 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
     // Keep element resolution in sync with the `frame` selection (see
     // element::set_active_frame for why this is mirrored).
     super::element::set_active_frame(state.active_frame_id.as_deref());
+
+    let skip_launch = skip_launch_action(action);
+    let needs_launch = if !skip_launch {
+        // Check if existing connection is stale and needs re-launch.
+        // This must happen before policy evaluation so plugin capability
+        // actions are gated when recovery relaunches would invoke plugins.
+        if let Some(ref mut mgr) = state.browser {
+            mgr.has_process_exited() || !mgr.is_connection_alive().await
+        } else {
+            true
+        }
+    } else {
+        false
+    };
+    let policy_actions = policy_actions_for_command(cmd, action, needs_launch);
 
     // Hot-reload and check action policy
     if let Some(ref mut policy) = state.policy {
@@ -1383,17 +1401,7 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
         }
     }
 
-    let skip_launch = skip_launch_action(action);
     if !skip_launch {
-        // Check if existing connection is stale and needs re-launch.
-        // First do a fast, non-blocking check: did the browser process crash/exit?
-        // This avoids a 3-second CDP timeout when Chrome is already dead.
-        let needs_launch = if let Some(ref mut mgr) = state.browser {
-            mgr.has_process_exited() || !mgr.is_connection_alive().await
-        } else {
-            true
-        };
-
         if needs_launch {
             if state.browser.is_some() {
                 if let Some(ref mut mgr) = state.browser {
@@ -8674,7 +8682,6 @@ mod tests {
     fn test_policy_actions_use_command_plugins_for_auto_launch_mutators() {
         let guard = EnvGuard::new(&["AGENT_BROWSER_PROVIDER"]);
         guard.remove("AGENT_BROWSER_PROVIDER");
-        let state = DaemonState::new();
         let cmd = json!({
             "action": "navigate",
             "id": "policy-plugin-1",
@@ -8688,17 +8695,38 @@ mod tests {
             ]
         });
 
-        let actions = policy_actions_for_command(&cmd, "navigate", &state);
+        let actions = policy_actions_for_command(&cmd, "navigate", true);
 
         assert_eq!(actions[0], "navigate");
         assert!(actions.contains(&"plugin:stealth:launch.mutate".to_string()));
     }
 
     #[test]
+    fn test_policy_actions_skip_auto_launch_mutators_when_browser_is_healthy() {
+        let guard = EnvGuard::new(&["AGENT_BROWSER_PROVIDER"]);
+        guard.remove("AGENT_BROWSER_PROVIDER");
+        let cmd = json!({
+            "action": "navigate",
+            "id": "policy-plugin-healthy",
+            "url": "https://example.com",
+            "plugins": [
+                {
+                    "name": "stealth",
+                    "command": "agent-browser-plugin-stealth",
+                    "capabilities": ["launch.mutate"]
+                }
+            ]
+        });
+
+        let actions = policy_actions_for_command(&cmd, "navigate", false);
+
+        assert_eq!(actions, vec!["navigate".to_string()]);
+    }
+
+    #[test]
     fn test_policy_actions_use_command_plugins_for_provider_auto_launch() {
         let guard = EnvGuard::new(&["AGENT_BROWSER_PROVIDER"]);
         guard.set("AGENT_BROWSER_PROVIDER", "browserbox");
-        let state = DaemonState::new();
         let cmd = json!({
             "action": "navigate",
             "id": "policy-plugin-2",
@@ -8717,7 +8745,7 @@ mod tests {
             ]
         });
 
-        let actions = policy_actions_for_command(&cmd, "navigate", &state);
+        let actions = policy_actions_for_command(&cmd, "navigate", true);
 
         assert!(actions.contains(&"plugin:browserbox:browser.provider".to_string()));
         assert!(!actions.contains(&"plugin:stealth:launch.mutate".to_string()));
