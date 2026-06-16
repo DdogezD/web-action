@@ -274,7 +274,7 @@ impl ToolProfile {
 
 impl McpConfig {
     fn from_profiles(profiles: Vec<ToolProfile>) -> Self {
-        if profiles.iter().any(|profile| *profile == ToolProfile::All) {
+        if profiles.contains(&ToolProfile::All) {
             return Self {
                 profiles: vec![ToolProfile::All],
                 enabled_tools: None,
@@ -580,9 +580,7 @@ fn handle_line(line: &str, config: &McpConfig, exit_after_response: &mut bool) -
     };
 
     // Notifications do not receive responses.
-    let Some(id) = id else {
-        return None;
-    };
+    let id = id?;
 
     match handle_request(method, message.get("params"), config, exit_after_response) {
         Ok(result) => Some(json!({
