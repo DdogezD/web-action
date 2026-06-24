@@ -15,6 +15,7 @@ agent-browser read [url]      # Fetch agent-readable text, or read the active ta
                               # Sends Accept: text/markdown, then tries .md if needed
                               # Walks ancestor paths for llms.txt before HTML fallback
                               # --filter narrows page content to matching heading sections
+                              # Honors --allowed-domains, --content-boundaries, and --max-output
                               # Options: --raw, --require-md, --outline, --llms <index|full>, --filter, --timeout <ms>
 agent-browser back            # Go back
 agent-browser forward         # Go forward

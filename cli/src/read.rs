@@ -3,6 +3,7 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE, USER_AGENT};
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
+use std::error::Error;
 use std::time::Duration;
 use url::Url;
 
@@ -44,6 +45,8 @@ pub struct ReadOptions {
     pub timeout_ms: u64,
     /// Extra HTTP headers. A supplied Accept header disables markdown negotiation fallbacks.
     pub headers: HashMap<String, String>,
+    /// Allowed domain patterns, using the same exact and wildcard semantics as --allowed-domains.
+    pub allowed_domains: Vec<String>,
 }
 
 impl Default for ReadOptions {
@@ -56,6 +59,7 @@ impl Default for ReadOptions {
             filter: None,
             timeout_ms: DEFAULT_TIMEOUT_MS,
             headers: HashMap::new(),
+            allowed_domains: Vec::new(),
         }
     }
 }
@@ -123,9 +127,20 @@ struct LlmsLink {
 
 pub async fn run_read(raw_url: &str, options: ReadOptions) -> Result<Value, String> {
     let target = normalize_url(raw_url)?;
+    check_allowed_url(&target, &options.allowed_domains)?;
+    let redirect_allowed_domains = options.allowed_domains.clone();
+    let redirect_policy = reqwest::redirect::Policy::custom(move |attempt| {
+        if attempt.previous().len() > 10 {
+            attempt.error("too many redirects")
+        } else if let Err(e) = check_allowed_url(attempt.url(), &redirect_allowed_domains) {
+            attempt.error(e)
+        } else {
+            attempt.follow()
+        }
+    });
     let client = Client::builder()
         .timeout(Duration::from_millis(options.timeout_ms))
-        .redirect(reqwest::redirect::Policy::limited(10))
+        .redirect(redirect_policy)
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
@@ -231,6 +246,7 @@ async fn fetch_read_url(
     target: Url,
     options: &ReadOptions,
 ) -> Result<ReadFetch, String> {
+    check_allowed_url(&target, &options.allowed_domains)?;
     let mut request = client
         .get(target.clone())
         .header(USER_AGENT, USER_AGENT_VALUE);
@@ -245,7 +261,7 @@ async fn fetch_read_url(
         request = request.header(key, value);
     }
 
-    let response = request.send().await.map_err(|e| e.to_string())?;
+    let response = request.send().await.map_err(format_reqwest_error)?;
     let status = response.status().as_u16();
     let final_url = response.url().to_string();
     let content_type = response
@@ -286,6 +302,20 @@ fn content_from_fetch(
     } else {
         Ok(("raw", fetch.body.clone()))
     }
+}
+
+fn format_reqwest_error(error: reqwest::Error) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(err) = source {
+        let part = err.to_string();
+        if !part.is_empty() && !message.contains(&part) {
+            message.push_str(": ");
+            message.push_str(&part);
+        }
+        source = err.source();
+    }
+    message
 }
 
 fn read_json(target: &Url, fetch: &ReadFetch, source: &str, content: String) -> Value {
@@ -349,6 +379,33 @@ fn should_try_md(options: &ReadOptions) -> bool {
         .headers
         .keys()
         .any(|key| key.eq_ignore_ascii_case("accept"))
+}
+
+fn check_allowed_url(url: &Url, allowed_domains: &[String]) -> Result<(), String> {
+    if allowed_domains.is_empty() {
+        return Ok(());
+    }
+    let hostname = url
+        .host_str()
+        .ok_or_else(|| format!("No hostname in URL: {}", url))?;
+    let hostname_lower = hostname.to_ascii_lowercase();
+    for pattern in allowed_domains {
+        let pattern = pattern.trim().to_ascii_lowercase();
+        if pattern.is_empty() {
+            continue;
+        }
+        if let Some(suffix) = pattern.strip_prefix("*.") {
+            if hostname_lower == suffix || hostname_lower.ends_with(&format!(".{}", suffix)) {
+                return Ok(());
+            }
+        } else if hostname_lower == pattern {
+            return Ok(());
+        }
+    }
+    Err(format!(
+        "Domain '{}' is not in the allowed domains list",
+        hostname
+    ))
 }
 
 fn markdown_fallback_url(url: &Url) -> Option<Url> {
@@ -1100,6 +1157,57 @@ Inline [Authentication](/inline-auth) should not become a TOC item.
 
         let err = content_from_fetch(&fetch, &options).unwrap_err();
         assert_eq!(err, "Expected text/markdown, got text/html");
+    }
+
+    #[tokio::test]
+    async fn run_read_blocks_disallowed_initial_url() {
+        let options = ReadOptions {
+            allowed_domains: vec!["example.com".to_string()],
+            ..ReadOptions::default()
+        };
+
+        let err = run_read("https://not-example.com/docs", options)
+            .await
+            .unwrap_err();
+
+        assert!(err.contains("not-example.com"));
+        assert!(err.contains("allowed domains"));
+    }
+
+    #[tokio::test]
+    async fn run_read_blocks_disallowed_redirect() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base = format!("http://{}", addr);
+
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0_u8; 2048];
+            let _ = stream.read(&mut buf).await.unwrap_or(0);
+            let response = "HTTP/1.1 302 Found\r\nLocation: https://example.com/docs\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            let _ = stream.write_all(response.as_bytes()).await;
+        });
+
+        let options = ReadOptions {
+            allowed_domains: vec!["127.0.0.1".to_string()],
+            ..ReadOptions::default()
+        };
+        let err = run_read(&base, options).await.unwrap_err();
+
+        assert!(err.contains("example.com"));
+        assert!(err.contains("allowed domains"));
+    }
+
+    #[test]
+    fn check_allowed_url_matches_wildcard_like_domain_filter() {
+        let root = normalize_url("https://example.com/docs").unwrap();
+        let subdomain = normalize_url("https://api.example.com/docs").unwrap();
+        let other = normalize_url("https://badexample.com/docs").unwrap();
+        let allowed = vec!["*.example.com".to_string()];
+
+        assert!(check_allowed_url(&root, &allowed).is_ok());
+        assert!(check_allowed_url(&subdomain, &allowed).is_ok());
+        assert!(check_allowed_url(&other, &allowed).is_err());
     }
 
     #[tokio::test]

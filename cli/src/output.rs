@@ -58,19 +58,28 @@ fn truncate_if_needed(content: &str, max: Option<usize>) -> String {
     }
 }
 
-fn print_with_boundaries(content: &str, origin: Option<&str>, opts: &OutputOptions) {
+fn format_with_boundaries(content: &str, origin: Option<&str>, opts: &OutputOptions) -> String {
     let content = truncate_if_needed(content, opts.max_output);
     if opts.content_boundaries {
         let origin_str = origin.unwrap_or("unknown");
         let nonce = get_boundary_nonce();
-        println!(
+        format!(
             "--- AGENT_BROWSER_PAGE_CONTENT nonce={} origin={} ---",
             nonce, origin_str
-        );
-        println!("{}", content);
-        println!("--- END_AGENT_BROWSER_PAGE_CONTENT nonce={} ---", nonce);
+        ) + "\n"
+            + &content
+            + "\n"
+            + &format!("--- END_AGENT_BROWSER_PAGE_CONTENT nonce={} ---", nonce)
     } else {
-        println!("{}", content);
+        content
+    }
+}
+
+fn print_with_boundaries(content: &str, origin: Option<&str>, opts: &OutputOptions) {
+    let content = format_with_boundaries(content, origin, opts);
+    print!("{}", content);
+    if !content.ends_with('\n') {
+        println!();
     }
 }
 
@@ -362,10 +371,11 @@ pub fn print_response_with_opts(resp: &Response, action: Option<&str>, opts: &Ou
         }
         if action == Some("read") {
             if let Some(content) = data.get("content").and_then(|v| v.as_str()) {
-                print!("{}", content);
-                if !content.ends_with('\n') {
-                    println!();
-                }
+                let origin = data
+                    .get("finalUrl")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| data.get("url").and_then(|v| v.as_str()));
+                print_with_boundaries(content, origin, opts);
             }
             return;
         }
@@ -1306,6 +1316,9 @@ Options:
 Global Options:
   --json               Output metadata and content as JSON
   --headers <json>     Additional HTTP headers, such as Authorization
+  --allowed-domains <list>  Restrict read fetches and redirects to allowed domains
+  --content-boundaries Wrap read output in boundary markers
+  --max-output <chars> Truncate read output to N chars
 
 Examples:
   agent-browser read
@@ -3659,7 +3672,7 @@ pub fn print_version() {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_storage_text, format_vitals_text};
+    use super::{format_storage_text, format_vitals_text, format_with_boundaries, OutputOptions};
     use serde_json::json;
 
     #[test]
@@ -3781,5 +3794,32 @@ hydration: 50.25ms  phases: 1  hydratedComponents: 2"
 ttfb: -  fcp: -  lcp: -  cls: 0  inp: -\n\
 hydration: -  phases: 0  hydratedComponents: 0"
         );
+    }
+
+    #[test]
+    fn test_format_with_boundaries_applies_max_output() {
+        let opts = OutputOptions {
+            max_output: Some(5),
+            ..OutputOptions::default()
+        };
+
+        let rendered = format_with_boundaries("abcdef", Some("https://example.com"), &opts);
+
+        assert!(rendered.starts_with("abcde\n[truncated: showing 5 of 6 chars."));
+    }
+
+    #[test]
+    fn test_format_with_boundaries_wraps_content() {
+        let opts = OutputOptions {
+            content_boundaries: true,
+            ..OutputOptions::default()
+        };
+
+        let rendered = format_with_boundaries("content", Some("https://example.com"), &opts);
+
+        assert!(rendered.contains("AGENT_BROWSER_PAGE_CONTENT"));
+        assert!(rendered.contains("origin=https://example.com"));
+        assert!(rendered.contains("\ncontent\n"));
+        assert!(rendered.contains("END_AGENT_BROWSER_PAGE_CONTENT"));
     }
 }

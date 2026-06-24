@@ -1284,6 +1284,7 @@ fn skip_launch_action(action: &str) -> bool {
         action,
         "" | "launch"
             | "close"
+            | "url"
             | "har_stop"
             | "credentials_set"
             | "credentials_get"
@@ -9715,6 +9716,21 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
             "Unexpected error: {}",
             error_msg
         );
+    }
+
+    #[tokio::test]
+    async fn test_url_without_browser_does_not_auto_launch() {
+        let mut state = DaemonState::new();
+        let cmd = json!({ "action": "url", "id": "test-url" });
+
+        let result = execute_command(&cmd, &mut state).await;
+
+        assert_eq!(result["success"], false);
+        assert!(state.browser.is_none());
+        assert!(result["error"]
+            .as_str()
+            .unwrap()
+            .contains("Browser not launched"));
     }
 
     #[tokio::test]

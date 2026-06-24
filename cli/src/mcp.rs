@@ -1851,6 +1851,7 @@ fn is_read_only_tool(name: &str) -> bool {
     matches!(
         name,
         TOOL_SNAPSHOT
+            | TOOL_READ
             | TOOL_WAIT_MS
             | TOOL_WAIT_FOR_SELECTOR
             | TOOL_WAIT_FOR_TEXT
@@ -3816,6 +3817,10 @@ mod tests {
             .iter()
             .find(|t| t["name"].as_str() == Some(TOOL_GET_URL))
             .unwrap();
+        let read = tools
+            .iter()
+            .find(|t| t["name"].as_str() == Some(TOOL_READ))
+            .unwrap();
         let skills_get = tools
             .iter()
             .find(|t| t["name"].as_str() == Some(TOOL_SKILLS_GET))
@@ -3823,6 +3828,8 @@ mod tests {
 
         assert_eq!(open["annotations"]["readOnlyHint"], false);
         assert_eq!(open["annotations"]["openWorldHint"], true);
+        assert_eq!(read["annotations"]["readOnlyHint"], true);
+        assert_eq!(read["annotations"]["openWorldHint"], true);
         assert_eq!(get_url["annotations"]["readOnlyHint"], true);
         assert_eq!(get_url["annotations"]["openWorldHint"], true);
         assert_eq!(skills_get["annotations"]["openWorldHint"], false);

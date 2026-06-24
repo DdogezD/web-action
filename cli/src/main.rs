@@ -294,6 +294,7 @@ fn read_options_from_command(
             .map(ToString::to_string),
         timeout_ms,
         headers,
+        allowed_domains: flags.allowed_domains.clone().unwrap_or_default(),
     })
 }
 
@@ -1704,6 +1705,69 @@ fn run_batch(
 mod tests {
     use super::*;
 
+    fn test_flags() -> Flags {
+        Flags {
+            json: false,
+            headed: false,
+            debug: false,
+            session: "test".to_string(),
+            headers: None,
+            executable_path: None,
+            cdp: None,
+            extensions: Vec::new(),
+            init_scripts: Vec::new(),
+            enable: Vec::new(),
+            profile: None,
+            state: None,
+            proxy: None,
+            proxy_bypass: None,
+            args: None,
+            user_agent: None,
+            provider: None,
+            ignore_https_errors: false,
+            allow_file_access: false,
+            hide_scrollbars: true,
+            device: None,
+            auto_connect: false,
+            session_name: None,
+            annotate: false,
+            color_scheme: None,
+            download_path: None,
+            content_boundaries: false,
+            max_output: None,
+            allowed_domains: None,
+            action_policy: None,
+            confirm_actions: None,
+            confirm_interactive: false,
+            engine: None,
+            screenshot_dir: None,
+            screenshot_quality: None,
+            screenshot_format: None,
+            idle_timeout: None,
+            default_timeout: None,
+            no_auto_dialog: false,
+            model: None,
+            plugins: Vec::new(),
+            verbose: false,
+            quiet: false,
+            cli_executable_path: false,
+            cli_extensions: false,
+            cli_init_scripts: false,
+            cli_enable: false,
+            cli_profile: false,
+            cli_state: false,
+            cli_args: false,
+            cli_user_agent: false,
+            cli_proxy: false,
+            cli_proxy_bypass: false,
+            cli_allow_file_access: false,
+            cli_hide_scrollbars: false,
+            cli_annotate: false,
+            cli_download_path: false,
+            cli_headed: false,
+        }
+    }
+
     #[test]
     fn test_parse_proxy_simple() {
         let result = parse_proxy("http://proxy.com:8080");
@@ -1815,6 +1879,20 @@ mod tests {
         attach_plugins_to_command(&mut cmd, &[]);
 
         assert_eq!(cmd["plugins"], json!([]));
+    }
+
+    #[test]
+    fn test_read_options_include_allowed_domains() {
+        let cmd = json!({ "action": "read", "timeout": 1000 });
+        let mut flags = test_flags();
+        flags.allowed_domains = Some(vec!["example.com".to_string(), "*.example.org".to_string()]);
+
+        let options = read_options_from_command(&cmd, &flags).unwrap();
+
+        assert_eq!(
+            options.allowed_domains,
+            vec!["example.com".to_string(), "*.example.org".to_string()]
+        );
     }
 
     #[test]
