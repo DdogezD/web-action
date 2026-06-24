@@ -495,6 +495,21 @@ fn check_allowed_url(url: &Url, allowed_domains: &[String]) -> Result<(), String
     ))
 }
 
+pub fn check_allowed_active_url(raw_url: &str, allowed_domains: &[String]) -> Result<(), String> {
+    if allowed_domains.is_empty() {
+        return Ok(());
+    }
+
+    let url = Url::parse(raw_url).map_err(|e| format!("Invalid active tab URL: {}", e))?;
+    match url.scheme() {
+        "http" | "https" => check_allowed_url(&url, allowed_domains),
+        scheme => Err(format!(
+            "Active tab URL scheme '{}' is not allowed by domain filter",
+            scheme
+        )),
+    }
+}
+
 fn markdown_fallback_url(url: &Url) -> Option<Url> {
     if url.path().ends_with(".md") {
         return None;
@@ -1343,6 +1358,26 @@ Inline [Authentication](/inline-auth) should not become a TOC item.
         assert!(check_allowed_url(&root, &allowed).is_ok());
         assert!(check_allowed_url(&subdomain, &allowed).is_ok());
         assert!(check_allowed_url(&other, &allowed).is_err());
+    }
+
+    #[test]
+    fn check_allowed_active_url_blocks_disallowed_active_tab() {
+        let allowed = vec!["example.com".to_string()];
+
+        let err = check_allowed_active_url("https://evil.example/docs", &allowed).unwrap_err();
+
+        assert!(err.contains("evil.example"));
+        assert!(err.contains("allowed domains"));
+    }
+
+    #[test]
+    fn check_allowed_active_url_blocks_non_http_active_tab_when_filter_enabled() {
+        let allowed = vec!["example.com".to_string()];
+
+        let err = check_allowed_active_url("about:blank", &allowed).unwrap_err();
+
+        assert!(err.contains("about"));
+        assert!(err.contains("domain filter"));
     }
 
     #[tokio::test]

@@ -2651,6 +2651,7 @@ async fn handle_read(cmd: &Value, state: &DaemonState) -> Result<Value, String> 
         .and_then(|v| v.as_str())
         .filter(|url| !url.is_empty())
         .ok_or_else(|| "Active tab has no URL".to_string())?;
+    crate::read::check_allowed_active_url(active_url, &options.allowed_domains)?;
 
     if options.llms.is_some() || options.require_md {
         return crate::read::run_read(active_url, options).await;
@@ -8769,6 +8770,39 @@ mod tests {
     use super::*;
     use crate::test_utils::EnvGuard;
     use std::fs;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    async fn start_webdriver_response_server(
+        responses: Vec<(&'static str, Value)>,
+    ) -> (u16, tokio::task::JoinHandle<usize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = tokio::spawn(async move {
+            let mut handled = 0;
+            for (expected_path, body) in responses {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buf = [0_u8; 2048];
+                let n = stream.read(&mut buf).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]);
+                assert!(
+                    request.starts_with(&format!("GET {} ", expected_path)),
+                    "unexpected webdriver request: {}",
+                    request.lines().next().unwrap_or("")
+                );
+                let body = body.to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+                handled += 1;
+            }
+            handled
+        });
+        (port, handle)
+    }
 
     fn unique_socket_dir(label: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
@@ -8978,6 +9012,73 @@ mod tests {
             .unwrap()
             .contains("Browser not launched"));
         assert!(state.browser.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_read_without_url_blocks_disallowed_active_tab_before_content() {
+        let (port, server) = start_webdriver_response_server(vec![(
+            "/session/test-session/url",
+            json!({ "value": "https://evil.example/private" }),
+        )])
+        .await;
+        let mut state = DaemonState::new();
+        state.backend_type = BackendType::WebDriver;
+        state.webdriver_backend = Some(WebDriverBackend::new(
+            crate::native::webdriver::client::WebDriverClient::new_with_session(
+                port,
+                "test-session".to_string(),
+            ),
+        ));
+        let cmd = json!({
+            "action": "read",
+            "id": "read-active-tab-denied",
+            "allowedDomains": ["example.com"]
+        });
+
+        let resp = execute_command(&cmd, &mut state).await;
+
+        assert_eq!(resp["success"], false);
+        let error = resp["error"].as_str().unwrap();
+        assert!(error.contains("evil.example"));
+        assert!(error.contains("allowed domains"));
+        assert_eq!(server.await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_read_without_url_allows_matching_active_tab() {
+        let (port, server) = start_webdriver_response_server(vec![
+            (
+                "/session/test-session/url",
+                json!({ "value": "https://example.com/app" }),
+            ),
+            (
+                "/session/test-session/source",
+                json!({ "value": "<html><body><h1>Account</h1><p>Signed in.</p></body></html>" }),
+            ),
+        ])
+        .await;
+        let mut state = DaemonState::new();
+        state.backend_type = BackendType::WebDriver;
+        state.webdriver_backend = Some(WebDriverBackend::new(
+            crate::native::webdriver::client::WebDriverClient::new_with_session(
+                port,
+                "test-session".to_string(),
+            ),
+        ));
+        let cmd = json!({
+            "action": "read",
+            "id": "read-active-tab-allowed",
+            "allowedDomains": ["example.com"]
+        });
+
+        let resp = execute_command(&cmd, &mut state).await;
+
+        assert_eq!(resp["success"], true);
+        assert_eq!(resp["data"]["source"], "active-tab-html");
+        let content = resp["data"]["content"].as_str().unwrap();
+        assert!(content.contains("# Account"));
+        assert!(content.contains("Signed in."));
+        assert_eq!(server.await.unwrap(), 2);
     }
 
     #[tokio::test]
