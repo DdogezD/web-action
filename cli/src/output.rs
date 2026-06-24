@@ -83,6 +83,15 @@ fn print_with_boundaries(content: &str, origin: Option<&str>, opts: &OutputOptio
     }
 }
 
+fn boundary_origin(data: &serde_json::Value) -> Option<&str> {
+    for key in ["origin", "finalUrl", "url"] {
+        if let Some(value) = data.get(key).and_then(|v| v.as_str()) {
+            return Some(value);
+        }
+    }
+    None
+}
+
 fn format_storage_value(value: &serde_json::Value) -> String {
     value
         .as_str()
@@ -277,8 +286,7 @@ pub fn print_response_with_opts(resp: &Response, action: Option<&str>, opts: &Ou
                 let nonce = get_boundary_nonce();
                 let origin = obj
                     .get("data")
-                    .and_then(|d| d.get("origin"))
-                    .and_then(|v| v.as_str())
+                    .and_then(boundary_origin)
                     .unwrap_or("unknown");
                 obj.insert(
                     "_boundary".to_string(),
@@ -3673,7 +3681,10 @@ pub fn print_version() {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_storage_text, format_vitals_text, format_with_boundaries, OutputOptions};
+    use super::{
+        boundary_origin, format_storage_text, format_vitals_text, format_with_boundaries,
+        OutputOptions,
+    };
     use serde_json::json;
 
     #[test]
@@ -3822,5 +3833,27 @@ hydration: -  phases: 0  hydratedComponents: 0"
         assert!(rendered.contains("origin=https://example.com"));
         assert!(rendered.contains("\ncontent\n"));
         assert!(rendered.contains("END_AGENT_BROWSER_PAGE_CONTENT"));
+    }
+
+    #[test]
+    fn test_boundary_origin_supports_read_metadata() {
+        assert_eq!(
+            boundary_origin(&json!({
+                "finalUrl": "https://example.com/read",
+                "url": "https://example.com/source"
+            })),
+            Some("https://example.com/read")
+        );
+        assert_eq!(
+            boundary_origin(&json!({
+                "origin": "https://example.com/dom",
+                "finalUrl": "https://example.com/read"
+            })),
+            Some("https://example.com/dom")
+        );
+        assert_eq!(
+            boundary_origin(&json!({ "url": "https://example.com/source" })),
+            Some("https://example.com/source")
+        );
     }
 }
