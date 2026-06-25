@@ -480,23 +480,7 @@ async fn shutdown_signal() {
 }
 
 fn get_daemon_socket_dir() -> PathBuf {
-    if let Ok(dir) = env::var("AGENT_BROWSER_SOCKET_DIR") {
-        if !dir.is_empty() {
-            return PathBuf::from(dir);
-        }
-    }
-
-    if let Ok(xdg) = env::var("XDG_RUNTIME_DIR") {
-        if !xdg.is_empty() {
-            return PathBuf::from(xdg).join("agent-browser");
-        }
-    }
-
-    if let Some(home) = dirs::home_dir() {
-        return home.join(".agent-browser");
-    }
-
-    std::env::temp_dir().join("agent-browser")
+    crate::connection::get_socket_dir()
 }
 
 #[cfg(windows)]
@@ -512,6 +496,28 @@ fn get_port_for_session(session: &str) -> u16 {
 mod tests {
     #[allow(unused_imports)]
     use super::*;
+
+    #[test]
+    fn test_daemon_socket_dir_matches_client_namespace() {
+        let guard = crate::test_utils::EnvGuard::new(&[
+            "AGENT_BROWSER_SOCKET_DIR",
+            "XDG_RUNTIME_DIR",
+            "AGENT_BROWSER_NAMESPACE",
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        guard.set("AGENT_BROWSER_SOCKET_DIR", dir.path().to_str().unwrap());
+        guard.remove("XDG_RUNTIME_DIR");
+        guard.set("AGENT_BROWSER_NAMESPACE", "Worktree: One");
+
+        let socket_dir = get_daemon_socket_dir();
+
+        assert_eq!(socket_dir, crate::connection::get_socket_dir());
+        assert!(socket_dir.ends_with(
+            std::path::PathBuf::from("namespaces")
+                .join("worktree-one")
+                .join("run")
+        ));
+    }
 
     #[cfg(windows)]
     #[test]

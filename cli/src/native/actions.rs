@@ -1390,6 +1390,10 @@ fn skip_launch_action(action: &str) -> bool {
     )
 }
 
+fn should_validate_restore_after_action(action: &str) -> bool {
+    action != "launch"
+}
+
 fn policy_actions_for_command(
     cmd: &Value,
     action: &str,
@@ -1814,7 +1818,7 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
         _ => Err(format!("Not yet implemented: {}", action)),
     };
 
-    if result.is_ok() {
+    if result.is_ok() && should_validate_restore_after_action(action) {
         validate_restore_if_pending(state).await;
     }
 
@@ -9262,6 +9266,13 @@ mod tests {
             "agent-browser-{label}-{}-{nanos}",
             std::process::id()
         ))
+    }
+
+    #[test]
+    fn test_restore_validation_is_deferred_after_launch() {
+        assert!(!should_validate_restore_after_action("launch"));
+        assert!(should_validate_restore_after_action("navigate"));
+        assert!(should_validate_restore_after_action("click"));
     }
 
     #[test]

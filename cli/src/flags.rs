@@ -968,46 +968,7 @@ pub fn parse_flags(args: &[String]) -> Flags {
 }
 
 fn looks_like_command(value: &str) -> bool {
-    matches!(
-        value,
-        "open"
-            | "goto"
-            | "navigate"
-            | "read"
-            | "click"
-            | "dblclick"
-            | "fill"
-            | "type"
-            | "press"
-            | "key"
-            | "snapshot"
-            | "screenshot"
-            | "pdf"
-            | "close"
-            | "quit"
-            | "exit"
-            | "session"
-            | "state"
-            | "tab"
-            | "window"
-            | "wait"
-            | "get"
-            | "is"
-            | "find"
-            | "set"
-            | "network"
-            | "stream"
-            | "react"
-            | "vitals"
-            | "batch"
-            | "mcp"
-            | "doctor"
-            | "install"
-            | "upgrade"
-            | "profiles"
-            | "skills"
-            | "dashboard"
-    )
+    crate::commands::is_top_level_command(value)
 }
 
 pub fn clean_args(args: &[String]) -> Vec<String> {
@@ -1241,6 +1202,28 @@ mod tests {
         assert_eq!(flags.restore.as_deref(), Some("login-state"));
         assert!(!flags.restore_uses_session);
         assert_eq!(clean_args(&input), vec!["open", "http://localhost:3000"]);
+    }
+
+    #[test]
+    fn test_parse_bare_restore_before_auth_command_uses_session() {
+        let input = args("--session next-loop --restore auth list");
+        let flags = parse_flags(&input);
+
+        assert_eq!(flags.session, "next-loop");
+        assert!(flags.restore_uses_session);
+        assert!(flags.restore.is_none());
+        assert_eq!(clean_args(&input), vec!["auth", "list"]);
+    }
+
+    #[test]
+    fn test_parse_bare_restore_before_hover_command_uses_session() {
+        let input = args("--session next-loop --restore hover button");
+        let flags = parse_flags(&input);
+
+        assert_eq!(flags.session, "next-loop");
+        assert!(flags.restore_uses_session);
+        assert!(flags.restore.is_none());
+        assert_eq!(clean_args(&input), vec!["hover", "button"]);
     }
 
     #[test]
