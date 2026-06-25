@@ -443,10 +443,10 @@ fn read_state_json(path: &str) -> Result<String, String> {
                         Ok(String::from_utf8(decrypted)
                             .map_err(|de| format!("Decrypted state is not valid UTF-8: {}", de))?)
                     } else {
-                        return Err(format!("Failed to read state from {}: {}", path, e));
+                        Err(format!("Failed to read state from {}: {}", path, e))
                     }
                 } else {
-                    return Err(format!("Failed to read state from {}: {}", path, e));
+                    Err(format!("Failed to read state from {}: {}", path, e))
                 }
             }
         }

@@ -549,7 +549,7 @@ fn run_session_info(session: &str, json_mode: bool) {
 
     println!("Session: {}", session);
     println!("Socket dir: {}", get_socket_dir().to_string_lossy());
-    if let Some(namespace) = env::var("AGENT_BROWSER_NAMESPACE").ok() {
+    if let Ok(namespace) = env::var("AGENT_BROWSER_NAMESPACE") {
         println!("Namespace: {}", namespace);
     }
     if let Some(active) = active {

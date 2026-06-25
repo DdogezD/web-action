@@ -2435,7 +2435,6 @@ async fn try_auto_restore_state(state: &mut DaemonState) {
                         state.restore_validation_pending = false;
                     }
                 }
-                return;
             }
         }
     } else {
