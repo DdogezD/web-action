@@ -2495,6 +2495,20 @@ async fn validate_restored_state(state: &DaemonState) -> Result<(), String> {
     Ok(())
 }
 
+fn mark_explicit_storage_state_loaded(state: &mut DaemonState, path: &str) {
+    if state.session_name.is_none() && state.restore_status == "not_configured" {
+        return;
+    }
+
+    state.restore_status = "loaded".to_string();
+    state.restore_status_detail = None;
+    state.restore_loaded_path = Some(path.to_string());
+    state.restore_load_failed = false;
+    state.restore_validation_pending = false;
+    state.restore_save_status = "not_attempted".to_string();
+    state.restore_saved_path = None;
+}
+
 pub(crate) async fn auto_save_restore_state(
     state: &mut DaemonState,
 ) -> Result<Option<String>, String> {
@@ -2561,12 +2575,17 @@ pub(crate) async fn auto_save_restore_state(
 ///
 /// Explicit launch should surface this error. Best-effort callers can ignore
 /// the returned `Result` and keep their previous behavior.
-async fn load_storage_state(state: &DaemonState, path: &Option<String>) -> Result<(), String> {
+async fn load_storage_state(state: &mut DaemonState, path: &Option<String>) -> Result<(), String> {
     if let Some(ref path) = path {
+        let mut loaded = false;
         if let Some(ref mgr) = state.browser {
             if let Ok(session_id) = mgr.active_session_id() {
                 state::load_state(&mgr.client, session_id, path).await?;
+                loaded = true;
             }
+        }
+        if loaded {
+            mark_explicit_storage_state_loaded(state, path);
         }
     }
 
@@ -2597,7 +2616,7 @@ async fn load_storage_state_or_rollback(
 }
 
 /// Load storage state from AGENT_BROWSER_STATE if set.
-async fn try_load_storage_state(state: &DaemonState, path: &Option<String>) {
+async fn try_load_storage_state(state: &mut DaemonState, path: &Option<String>) {
     let _ = load_storage_state(state, path).await;
 }
 
@@ -4474,7 +4493,7 @@ async fn handle_state_save(cmd: &Value, state: &DaemonState) -> Result<Value, St
     Ok(json!({ "saved": true, "path": saved_path }))
 }
 
-async fn handle_state_load(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
+async fn handle_state_load(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
     let session_id = mgr.active_session_id()?.to_string();
     let path = cmd
@@ -4483,6 +4502,7 @@ async fn handle_state_load(cmd: &Value, state: &DaemonState) -> Result<Value, St
         .ok_or("Missing 'path' parameter")?;
 
     state::load_state(&mgr.client, &session_id, path).await?;
+    mark_explicit_storage_state_loaded(state, path);
     Ok(json!({ "loaded": true, "path": path }))
 }
 
@@ -9561,6 +9581,44 @@ mod tests {
         assert!(err.contains("Invalid restore save policy"));
         assert!(state.session_name.is_none());
         assert_eq!(state.restore_save, "auto");
+    }
+
+    #[test]
+    fn test_explicit_state_load_clears_restore_failure_for_auto_save() {
+        let mut state = DaemonState::new();
+        state.session_name = Some("restore-key".to_string());
+        state.restore_status = "loaded_but_invalid".to_string();
+        state.restore_status_detail = Some("missing text".to_string());
+        state.restore_loaded_path = Some("/tmp/old-restore.json".to_string());
+        state.restore_load_failed = true;
+        state.restore_validation_pending = true;
+        state.restore_save_status = "skipped_restore_failed".to_string();
+        state.restore_saved_path = Some("/tmp/old-restore.json".to_string());
+
+        mark_explicit_storage_state_loaded(&mut state, "/tmp/my-auth.json");
+
+        assert_eq!(state.restore_status, "loaded");
+        assert!(state.restore_status_detail.is_none());
+        assert_eq!(
+            state.restore_loaded_path.as_deref(),
+            Some("/tmp/my-auth.json")
+        );
+        assert!(!state.restore_load_failed);
+        assert!(!state.restore_validation_pending);
+        assert_eq!(state.restore_save_status, "not_attempted");
+        assert!(state.restore_saved_path.is_none());
+    }
+
+    #[test]
+    fn test_explicit_state_load_without_restore_keeps_restore_unconfigured() {
+        let mut state = DaemonState::new();
+
+        mark_explicit_storage_state_loaded(&mut state, "/tmp/my-auth.json");
+
+        assert_eq!(state.restore_status, "not_configured");
+        assert!(state.restore_loaded_path.is_none());
+        assert!(!state.restore_load_failed);
+        assert_eq!(state.restore_save_status, "not_attempted");
     }
 
     #[test]
