@@ -1362,23 +1362,9 @@ fn reconcile_restore_check_change(
 }
 
 fn apply_restore_config_from_command(cmd: &Value, state: &mut DaemonState) -> Result<(), String> {
+    validate_restore_config_from_command(cmd)?;
+
     let restore_key = cmd.get("restoreKey").and_then(|v| v.as_str());
-    if let Some(restore_key) = restore_key {
-        if !restore_key.is_empty() && !is_valid_session_name(restore_key) {
-            return Err(session_name_error(restore_key));
-        }
-    }
-
-    let restore_save = cmd.get("restoreSave").map(|v| v.as_str().unwrap_or("auto"));
-    if let Some(policy) = restore_save {
-        if !matches!(policy, "auto" | "always" | "never") {
-            return Err(format!(
-                "Invalid restore save policy '{}'. Use auto, always, or never.",
-                policy
-            ));
-        }
-    }
-
     let old_checks = (
         state.restore_check_url.clone(),
         state.restore_check_text.clone(),
@@ -1396,7 +1382,7 @@ fn apply_restore_config_from_command(cmd: &Value, state: &mut DaemonState) -> Re
             }
         }
     }
-    if let Some(policy) = restore_save {
+    if let Some(policy) = cmd.get("restoreSave").map(|v| v.as_str().unwrap_or("auto")) {
         state.restore_save = policy.to_string();
     }
     if let Some(new_checks) = command_restore_check_fields(cmd) {
@@ -1409,6 +1395,54 @@ fn apply_restore_config_from_command(cmd: &Value, state: &mut DaemonState) -> Re
     }
 
     Ok(())
+}
+
+fn validate_restore_config_from_command(cmd: &Value) -> Result<(), String> {
+    let restore_key = cmd.get("restoreKey").and_then(|v| v.as_str());
+    if let Some(restore_key) = restore_key {
+        if !restore_key.is_empty() && !is_valid_session_name(restore_key) {
+            return Err(session_name_error(restore_key));
+        }
+    }
+
+    let restore_save = cmd.get("restoreSave").map(|v| v.as_str().unwrap_or("auto"));
+    if let Some(policy) = restore_save {
+        if !matches!(policy, "auto" | "always" | "never") {
+            return Err(format!(
+                "Invalid restore save policy '{}'. Use auto, always, or never.",
+                policy
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn command_changes_restore_key(cmd: &Value, state: &DaemonState) -> bool {
+    cmd.get("restoreKey")
+        .and_then(|v| v.as_str())
+        .filter(|key| !key.is_empty())
+        .is_some_and(|key| state.session_name.as_deref() != Some(key))
+}
+
+fn has_active_browser_session(state: &DaemonState) -> bool {
+    state.browser.is_some() || state.active_provider_session.is_some()
+}
+
+async fn apply_restore_config_after_confirmation(
+    cmd: &Value,
+    state: &mut DaemonState,
+) -> Result<bool, String> {
+    let restore_key_changed = command_changes_restore_key(cmd, state);
+    let had_browser = has_active_browser_session(state);
+
+    if restore_key_changed && had_browser {
+        let _ = auto_save_restore_state(state).await;
+        let _ = close_current_browser(state).await;
+    }
+
+    apply_restore_config_from_command(cmd, state)?;
+    Ok(restore_key_changed && had_browser)
 }
 
 fn remember_active_provider_session(
@@ -1551,7 +1585,7 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
 
     let cmd_start = std::time::Instant::now();
 
-    if let Err(err) = apply_restore_config_from_command(cmd, state) {
+    if let Err(err) = validate_restore_config_from_command(cmd) {
         return error_response(&id, &err);
     }
 
@@ -1597,11 +1631,16 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
     super::element::set_active_frame(state.active_frame_id.as_deref());
 
     let skip_launch = skip_launch_action(action);
+    let restore_key_change_needs_launch = !skip_launch
+        && command_changes_restore_key(cmd, state)
+        && has_active_browser_session(state);
     let needs_launch = if !skip_launch {
         // Check if existing connection is stale and needs re-launch.
         // This must happen before policy evaluation so plugin capability
         // actions are gated when recovery relaunches would invoke plugins.
-        if let Some(ref mut mgr) = state.browser {
+        if restore_key_change_needs_launch {
+            true
+        } else if let Some(ref mut mgr) = state.browser {
             mgr.has_process_exited() || !mgr.is_connection_alive().await
         } else {
             true
@@ -1681,10 +1720,17 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
         }
     }
 
+    let restore_transition_closed_browser =
+        match apply_restore_config_after_confirmation(cmd, state).await {
+            Ok(closed_browser) => closed_browser,
+            Err(err) => return error_response(&id, &err),
+        };
+
     if !skip_launch {
         if needs_launch {
-            lifecycle_relaunched_browser =
-                state.browser.is_some() || state.active_provider_session.is_some();
+            lifecycle_relaunched_browser = restore_transition_closed_browser
+                || state.browser.is_some()
+                || state.active_provider_session.is_some();
             if state.browser.is_some() || state.active_provider_session.is_some() {
                 let _ = auto_save_restore_state(state).await;
                 let _ = close_current_browser(state).await;
@@ -9699,6 +9745,32 @@ mod tests {
         assert_eq!(resp["success"], false);
         assert!(resp["error"].as_str().unwrap().contains("read"));
         assert!(state.browser.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_restore_config_is_not_applied_before_confirmation() {
+        let dir = tempfile::tempdir().unwrap();
+        let policy_path = dir.path().join("policy.json");
+        fs::write(&policy_path, r#"{"confirm":["navigate"]}"#).unwrap();
+
+        let mut state = DaemonState::new();
+        state.policy = Some(ActionPolicy::load(policy_path.to_str().unwrap()).unwrap());
+        state.session_name = Some("old-key".to_string());
+        state.restore_status = "loaded".to_string();
+
+        let cmd = json!({
+            "action": "navigate",
+            "id": "restore-confirm",
+            "url": "https://example.com",
+            "restoreKey": "new-key"
+        });
+
+        let resp = execute_command(&cmd, &mut state).await;
+
+        assert_eq!(resp["success"], true);
+        assert_eq!(resp["data"]["confirmation_required"], true);
+        assert_eq!(state.session_name.as_deref(), Some("old-key"));
+        assert_eq!(state.restore_status, "loaded");
     }
 
     #[tokio::test]

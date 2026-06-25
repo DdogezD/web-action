@@ -94,6 +94,45 @@ async fn create_storage_state_with_cookie(path: &str, cookie_name: &str, cookie_
     assert_success(&resp);
 }
 
+async fn create_restore_state_with_cookie(
+    restore_key: &str,
+    cookie_name: &str,
+    cookie_value: &str,
+) {
+    let mut state = DaemonState::new();
+
+    let resp = execute_command(
+        &json!({
+            "id": "1",
+            "action": "navigate",
+            "url": "https://example.com",
+            "restoreKey": restore_key
+        }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    let resp = execute_command(
+        &json!({
+            "id": "2",
+            "action": "cookies_set",
+            "name": cookie_name,
+            "value": cookie_value,
+            "domain": ".example.com",
+            "path": "/",
+            "expires": 2000000000
+        }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    let resp = execute_command(&json!({ "id": "3", "action": "close" }), &mut state).await;
+    assert_success(&resp);
+    assert_eq!(get_data(&resp)["saveStatus"], "saved");
+}
+
 async fn send_raw_http_request(port: u64, request: &str) -> String {
     let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
         .await
@@ -5417,6 +5456,98 @@ async fn e2e_restore_validation_failure_does_not_overwrite_state() {
 
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.previous", path));
+}
+
+#[tokio::test]
+#[ignore]
+async fn e2e_restore_key_switch_reloads_instead_of_reusing_live_browser() {
+    let restore_key_a = format!(
+        "e2e-restore-switch-a-{}",
+        &uuid::Uuid::new_v4().to_string()[..8]
+    );
+    let restore_key_b = format!(
+        "e2e-restore-switch-b-{}",
+        &uuid::Uuid::new_v4().to_string()[..8]
+    );
+    let cookie_name = "restore_switch_test";
+    let env = EnvGuard::new(&[
+        "AGENT_BROWSER_SESSION_NAME",
+        "AGENT_BROWSER_RESTORE_SAVE",
+        "AGENT_BROWSER_STATE",
+        "AGENT_BROWSER_ENCRYPTION_KEY",
+    ]);
+    env.remove("AGENT_BROWSER_SESSION_NAME");
+    env.remove("AGENT_BROWSER_RESTORE_SAVE");
+    env.remove("AGENT_BROWSER_STATE");
+    env.remove("AGENT_BROWSER_ENCRYPTION_KEY");
+
+    create_restore_state_with_cookie(&restore_key_a, cookie_name, "value-a").await;
+    create_restore_state_with_cookie(&restore_key_b, cookie_name, "value-b").await;
+
+    let path_a = super::state::find_auto_state_file(&restore_key_a)
+        .expect("first restore key should have saved state");
+    let path_b = super::state::find_auto_state_file(&restore_key_b)
+        .expect("second restore key should have saved state");
+
+    let mut state = DaemonState::new();
+    let resp = execute_command(
+        &json!({
+            "id": "10",
+            "action": "navigate",
+            "url": "https://example.com",
+            "restoreKey": restore_key_a
+        }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    let resp = execute_command(&json!({ "id": "11", "action": "cookies_get" }), &mut state).await;
+    assert_success(&resp);
+    let cookies = get_data(&resp)["cookies"].as_array().unwrap();
+    assert!(
+        cookies
+            .iter()
+            .any(|c| c["name"] == cookie_name && c["value"] == "value-a"),
+        "first restore key should load value-a: {:?}",
+        cookies
+    );
+
+    let resp = execute_command(
+        &json!({
+            "id": "20",
+            "action": "navigate",
+            "url": "https://example.com",
+            "restoreKey": restore_key_b
+        }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+    assert_eq!(get_data(&resp)["lifecycle"]["relaunchedBrowser"], true);
+
+    let resp = execute_command(&json!({ "id": "21", "action": "cookies_get" }), &mut state).await;
+    assert_success(&resp);
+    let cookies = get_data(&resp)["cookies"].as_array().unwrap();
+    assert!(
+        cookies
+            .iter()
+            .any(|c| c["name"] == cookie_name && c["value"] == "value-b"),
+        "switching restore keys should load value-b, not reuse value-a: {:?}",
+        cookies
+    );
+
+    let resp = execute_command(&json!({ "id": "99", "action": "close" }), &mut state).await;
+    assert_success(&resp);
+
+    let saved_b = std::fs::read_to_string(&path_b).expect("state file should remain readable");
+    assert!(saved_b.contains("value-b"));
+    assert!(!saved_b.contains("value-a"));
+
+    let _ = std::fs::remove_file(&path_a);
+    let _ = std::fs::remove_file(format!("{}.previous", path_a));
+    let _ = std::fs::remove_file(&path_b);
+    let _ = std::fs::remove_file(format!("{}.previous", path_b));
 }
 
 /// Verify that explicit `state_load` restores cookies into an existing
