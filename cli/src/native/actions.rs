@@ -6764,6 +6764,44 @@ async fn resolve_frame_id_from_selector(
         return Ok((frame_id, selector.to_string()));
     }
 
+    // The selector string may be the iframe's accessible name (title
+    // attribute), which is what snapshot frame boundary labels show.
+    // Search for an iframe whose title attribute matches.
+    let title_js = format!(
+        r#"(() => {{
+            const el = document.querySelector({title_sel}) || document.querySelector({aria_sel});
+            if (!el || (el.tagName !== 'IFRAME' && el.tagName !== 'FRAME')) return null;
+            return el.name || el.id || el.src || null;
+        }})()"#,
+        title_sel = serde_json::to_string(&format!("iframe[title='{}']", selector)).unwrap_or_default(),
+        aria_sel = serde_json::to_string(&format!("iframe[aria-label='{}']", selector)).unwrap_or_default(),
+    );
+    let title_result = client
+        .send_command(
+            "Runtime.evaluate",
+            Some(serde_json::json!({
+                "expression": title_js,
+                "returnByValue": true,
+                "awaitPromise": false,
+            })),
+            Some(session_id),
+        )
+        .await?;
+    let title_identity = title_result
+        .get("result")
+        .and_then(|r| r.get("value"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    if let Some(ref ident) = title_identity {
+        // The identity from the DOM may be a URL (src) or a name. Try both.
+        if let Some(frame_id) = find_frame_in_tree(frame_tree, Some(ident.as_str()), None) {
+            return Ok((frame_id, selector.to_string()));
+        }
+        if let Some(frame_id) = find_frame_in_tree(frame_tree, None, Some(ident.as_str())) {
+            return Ok((frame_id, selector.to_string()));
+        }
+    }
+
     Err(format!("Frame not found for selector: {}", selector))
 }
 
