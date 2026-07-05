@@ -6653,6 +6653,12 @@ async fn resolve_frame_id_from_selector(
     selector: &str,
     ref_map: &RefMap,
 ) -> Result<(String, String), String> {
+    // Reject empty selector early; document.querySelector("") returns the
+    // document node, which DOM.describeNode cannot handle.
+    if selector.is_empty() {
+        return Err("Frame selector must not be empty".to_string());
+    }
+
     // Ref resolution: use the ref map entry + DOM.describeNode to get the
     // iframe element's child frame ID.
     if let Some(ref_id) = super::element::parse_ref(selector) {
