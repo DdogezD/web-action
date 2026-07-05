@@ -587,8 +587,7 @@ impl BrowserManager {
             .target_infos
             .iter()
             .find(|t| t.target_type == "page"
-                && t.url.starts_with("chrome://")
-                && t.attached.unwrap_or(false))
+                && t.url.starts_with("chrome://"))
             .map(|t| t.target_id.clone());
 
         let page_targets: Vec<TargetInfo> = result
