@@ -2,7 +2,7 @@
 
 Headless browser automation CLI for AI agents — persistent sessions with stealth.
 
-Forked from [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser) and enhanced with anti-detection stealth, `--tabname` multi-tab isolation, and persistent profiles. Uses your system browser — no bundled Chrome download needed.
+Forked from [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser) and enhanced with anti-detection stealth, `--tabname` multi-tab isolation, persistent profiles, and cross-frame interaction (`--frame`). Uses your system browser — no bundled Chrome download needed.
 
 ## Why This Fork?
 
@@ -12,6 +12,7 @@ Forked from [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-bro
 | **Profile** | Temp dir (lost on close) | Persistent (`~/.web-action/profiles/main/`) |
 | **Stealth** | None | CDP-level anti-detection (no `Runtime.enable`, no `--enable-automation`, SW stub, webdriver spoof) |
 | **Tab routing** | Index-based (`tab 0`, `tab 1`) | `--tabname` named labels (parallel-safe) |
+| **Iframe interaction** | Manual `frame`/`mainframe` commands only | Snapshot auto-inlines iframe content with frame boundary annotations; refs work transparently across frames; `--frame <sel>` scopes any CSS-selector command to a single iframe (supports ref, CSS, name, title, and URL matching) |
 | **Engine** | Playwright-flavored CDP flags | Minimal flags that don't signal automation |
 
 ## Installation
