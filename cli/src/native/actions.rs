@@ -1765,7 +1765,7 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
                 // avoiding a wasted tab that would persist for the session lifetime.
                 let pages = mgr.pages_list();
                 if mgr.page_count() == 1
-                    && pages.first().is_some_and(|p| p.label.is_none())
+                    && pages.first().is_some_and(|p| p.label.is_none() && p.url == "about:blank")
                 {
                     mgr.relabel_tab(pages[0].tab_id, tab_name);
                 } else if let Err(e) = mgr.tab_new(None, Some(tab_name)).await {

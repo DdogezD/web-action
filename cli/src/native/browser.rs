@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -13,59 +14,76 @@ use super::cdp::types::*;
 use super::element::{resolve_element_object_id, RefMap};
 
 /// Anti-detection script injected into every page to hide automation indicators.
-/// Based on Patchright research: combines navigator/webdriver spoofing,
-/// service worker stubbing, and runtime detection evasion.
+///
+/// `navigator.webdriver` is NOT overridden here — it is handled natively by
+/// the `--disable-blink-features=AutomationControlled` Chrome flag.  A JS-level
+/// `Object.defineProperty` would itself be detectable via
+/// `Object.getOwnPropertyDescriptor`.
 const STEALTH_SCRIPT: &str = r#"
-// Overwrite the `navigator.webdriver` property
-Object.defineProperty(navigator, 'webdriver', { get: () => false });
-
-// Ensure `window.chrome` exists (normal Chrome has it)
+// Ensure `window.chrome` exists (normal Chrome has it), with enough shape
+// that `typeof chrome.runtime.sendMessage === 'function'` returns true.
 if (!window.chrome) {
-    window.chrome = { runtime: {} };
-}
-if (!window.chrome.runtime) {
-    window.chrome.runtime = {};
+    window.chrome = {
+        runtime: {
+            sendMessage: function() {},
+            connect: function() { return { disconnect: function() {} }; },
+            onMessage: { addListener: function() {}, removeListener: function() {} },
+            onConnect: { addListener: function() {}, removeListener: function() {} },
+            getManifest: function() { return {}; },
+            getURL: function(p) { return p; },
+        },
+    };
 }
 
-// Overwrite the `navigator.plugins` property (normal Chrome has plugins)
-Object.defineProperty(navigator, 'plugins', {
-    get: () => [1, 2, 3, 4, 5],
-});
+// Overwrite `navigator.plugins` — must look like a PluginArray, not a plain
+// JS array.  Each entry is a minimal MimeType-like object.
+(function() {
+    var _makePlugin = function(name) {
+        return { name: name, description: name + ' Plugin', filename: 'internal-' + name.toLowerCase() + '-plugin', length: 1 };
+    };
+    var _arr = [_makePlugin('Chrome PDF Plugin'), _makePlugin('Chrome PDF Viewer'), _makePlugin('Native Client')];
+    _arr.item = function(i) { return this[i]; };
+    _arr.namedItem = function(n) {
+        for (var i = 0; i < _arr.length; i++)
+            if (_arr[i].name === n) return _arr[i];
+        return null;
+    };
+    _arr.refresh = function() {};
+    Object.defineProperty(navigator, 'plugins', { get: function() { return _arr; } });
+})();
 
 // Overwrite `navigator.languages` if missing
 if (!navigator.languages || navigator.languages.length === 0) {
     Object.defineProperty(navigator, 'languages', {
-        get: () => ['en-US', 'en'],
+        get: function() { return ['en-US', 'en']; },
     });
 }
 
 // Remove "HeadlessChrome" from user agent if present
-const _origUALookup = Object.getOwnPropertyDescriptor(Navigator.prototype, 'userAgent') ||
-    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(navigator), 'userAgent');
-if (_origUALookup && _origUALookup.get) {
-    const _origUAGetter = _origUALookup.get;
-    Object.defineProperty(navigator, 'userAgent', {
-        get: function() {
-            return _origUAGetter.call(this).replace(/HeadlessChrome/g, 'Chrome');
-        }
-    });
-}
-
-// Overwrite permissions to avoid automation-specific behavior
-const _origPermQuery = window.navigator.permissions.query;
-window.navigator.permissions.query = function(parameters) {
-    if (parameters.name === 'notifications') {
-        return Promise.resolve({ state: Notification.permission, onchange: null });
+(function() {
+    var d = Object.getOwnPropertyDescriptor(Navigator.prototype, 'userAgent') ||
+            Object.getOwnPropertyDescriptor(Object.getPrototypeOf(navigator), 'userAgent');
+    if (d && d.get) {
+        var orig = d.get;
+        Object.defineProperty(navigator, 'userAgent', {
+            get: function() { return orig.call(this).replace(/HeadlessChrome/g, 'Chrome'); },
+        });
     }
-    return _origPermQuery.call(this, parameters);
-};
+})();
 
-// Stub service worker registration.
-// Patchright research: the real navigator.serviceWorker.register
-// can be used to fingerprint the browser. A no-op stub prevents
-// detection without breaking functionality.
+// Overwrite notifications permission query
+(function() {
+    var orig = window.navigator.permissions.query;
+    window.navigator.permissions.query = function(params) {
+        if (params.name === 'notifications')
+            return Promise.resolve({ state: Notification.permission, onchange: null });
+        return orig.call(this, params);
+    };
+})();
+
+// Stub service worker registration — prevents SW-based fingerprinting.
 if (navigator.serviceWorker) {
-    navigator.serviceWorker.register = async () => { };
+    navigator.serviceWorker.register = async function() { };
 }
 "#;
 
@@ -580,7 +598,7 @@ impl BrowserManager {
             .collect();
 
         if page_targets.is_empty() {
-            let (target_id, session_id) = if let Some(ref internal_id) = internal_target {
+            let (target_id, session_id, initial_url) = if let Some(ref internal_id) = internal_target {
                 // Reuse Chrome's default "New Tab" instead of creating a second tab
                 let attach_result: AttachToTargetResult = self
                     .client
@@ -594,15 +612,33 @@ impl BrowserManager {
                     )
                     .await?;
                 // Navigate away from chrome://newtab/
-                let _ = self
+                let nav = self
                     .client
-                    .send_command_typed::<_, Value>(
+                    .send_command_typed::<_, PageNavigateResult>(
                         "Page.navigate",
                         &serde_json::json!({ "url": "about:blank" }),
                         Some(&attach_result.session_id),
                     )
                     .await;
-                (internal_id.clone(), attach_result.session_id)
+                let url = match &nav {
+                    Ok(r) if r.error_text.is_some() => {
+                        let _ = writeln!(
+                            std::io::stderr(),
+                            "[web-action] Failed to navigate internal tab: {}",
+                            r.error_text.as_deref().unwrap_or("unknown")
+                        );
+                        "about:blank".to_string()
+                    }
+                    Err(e) => {
+                        let _ = writeln!(
+                            std::io::stderr(),
+                            "[web-action] Failed to navigate internal tab: {}", e
+                        );
+                        "about:blank".to_string()
+                    }
+                    _ => "about:blank".to_string(),
+                };
+                (internal_id.clone(), attach_result.session_id, url)
             } else {
                 // No existing tabs at all — create one
                 let result: CreateTargetResult = self
@@ -627,7 +663,7 @@ impl BrowserManager {
                         None,
                     )
                     .await?;
-                (result.target_id, attach_result.session_id)
+                (result.target_id, attach_result.session_id, "about:blank".to_string())
             };
 
             let tab_id = self.next_tab_id;
@@ -637,7 +673,7 @@ impl BrowserManager {
                 label: None,
                 target_id,
                 session_id: session_id.clone(),
-                url: "about:blank".to_string(),
+                url: initial_url,
                 title: String::new(),
                 target_type: "page".to_string(),
             });
@@ -1131,8 +1167,11 @@ impl BrowserManager {
         }
     }
 
-    /// Assign a label to an existing tab. No-op if the label is already taken
-    /// or the tab doesn't exist.
+    /// Assign a label to an existing tab.
+    ///
+    /// Silently no-ops when the label is already taken (labels must be unique)
+    /// or the tab doesn't exist.  Callers should use `has_label` to check
+    /// before calling if they need to distinguish "no-op" from "applied".
     pub fn relabel_tab(&mut self, tab_id: u32, label: &str) {
         if self.has_label(label) {
             return;
