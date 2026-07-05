@@ -68,8 +68,14 @@ if [ ! -f "$BINARY" ]; then
     err "Build failed: binary not found at $BINARY"
 fi
 
+# Replace the old binary. If it's running, `rm` may fail with ETXTBUSY;
+# fall back to renaming the old file first (the running process keeps its inode).
+if ! rm -f "$BIN_DIR/web-action" 2>/dev/null; then
+    mv "$BIN_DIR/web-action" "$BIN_DIR/web-action.old" 2>/dev/null || true
+fi
 cp "$BINARY" "$BIN_DIR/web-action"
 chmod +x "$BIN_DIR/web-action"
+rm -f "$BIN_DIR/web-action.old"
 
 # Copy Claude Code skill before BUILD_DIR is cleaned up by trap
 SKILL_DIR="${CLAUDE_CODE_SKILL_DIR:-$HOME/.claude/skills/web-action}"
