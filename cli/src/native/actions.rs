@@ -6938,9 +6938,27 @@ fn build_role_selector(role: &str, name: Option<&str>, exact: bool) -> String {
     }
 }
 
+/// Resolve the CDP session for Runtime.evaluate calls, respecting the
+/// active frame context set by `--frame` or `frame <sel>`.  Cross-origin
+/// iframes have a dedicated session; same-origin iframes fall back to the
+/// tab-level session (the JS accesses iframe contentDocument via the DOM
+/// owner element path in evaluate_js_for_find).
+fn effective_eval_session<'a>(
+    iframe_sessions: &'a HashMap<String, String>,
+    default_session: &'a str,
+) -> &'a str {
+    if let Some(frame_id) = super::element::active_frame() {
+        if let Some(iframe_session) = iframe_sessions.get(&frame_id) {
+            return iframe_session.as_str();
+        }
+    }
+    default_session
+}
+
 async fn handle_getbyrole(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
     let session_id = mgr.active_session_id()?.to_string();
+    let eval_session = effective_eval_session(&state.iframe_sessions, &session_id);
     let role = cmd
         .get("role")
         .and_then(|v| v.as_str())
@@ -6989,7 +7007,7 @@ async fn handle_getbyrole(cmd: &Value, state: &mut DaemonState) -> Result<Value,
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&session_id),
+            Some(eval_session),
         )
         .await?;
 
@@ -7030,6 +7048,7 @@ async fn handle_semantic_locator(
 ) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
     let session_id = mgr.active_session_id()?.to_string();
+    let eval_session = effective_eval_session(&state.iframe_sessions, &session_id);
     let value = cmd
         .get(param_name)
         .and_then(|v| v.as_str())
@@ -7140,7 +7159,7 @@ async fn handle_semantic_locator(
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&session_id),
+            Some(eval_session),
         )
         .await?;
 
@@ -7196,6 +7215,7 @@ async fn handle_getbytestid(cmd: &Value, state: &mut DaemonState) -> Result<Valu
 async fn handle_nth(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
     let session_id = mgr.active_session_id()?.to_string();
+    let eval_session = effective_eval_session(&state.iframe_sessions, &session_id);
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())
@@ -7226,7 +7246,7 @@ async fn handle_nth(cmd: &Value, state: &mut DaemonState) -> Result<Value, Strin
                 return_by_value: Some(true),
                 await_promise: Some(false),
             },
-            Some(&session_id),
+            Some(eval_session),
         )
         .await?;
 
@@ -7258,6 +7278,118 @@ async fn handle_nth(cmd: &Value, state: &mut DaemonState) -> Result<Value, Strin
     action_result
 }
 
+/// Evaluate JavaScript in the active frame context when --frame is in effect.
+/// Cross-origin iframes get evaluated via their dedicated CDP session;
+/// same-origin iframes are accessed through the frame owner's contentDocument;
+/// the main frame uses the standard page-level session.
+async fn evaluate_js_for_find(
+    mgr: &super::browser::BrowserManager,
+    script: &str,
+    iframe_sessions: &HashMap<String, String>,
+) -> Result<Value, String> {
+    let frame_id = match super::element::active_frame() {
+        Some(fid) => fid,
+        None => return mgr.evaluate(script, None).await,
+    };
+
+    // Cross-origin iframe: use its dedicated CDP session.  Runtime.evaluate
+    // in that session runs in the iframe's main execution context, which IS
+    // the iframe document.
+    if let Some(iframe_session) = iframe_sessions.get(&frame_id) {
+        let session_id = iframe_session.clone();
+        let js = script.to_string();
+        let result: super::cdp::types::EvaluateResult = mgr
+            .client
+            .send_command_typed(
+                "Runtime.evaluate",
+                &super::cdp::types::EvaluateParams {
+                    expression: js,
+                    return_by_value: Some(true),
+                    await_promise: Some(true),
+                },
+                Some(&session_id),
+            )
+            .await?;
+        if let Some(ref details) = result.exception_details {
+            let msg = details
+                .exception
+                .as_ref()
+                .and_then(|e| e.description.as_deref())
+                .unwrap_or(&details.text);
+            return Err(format!("Evaluation error: {}", msg));
+        }
+        return Ok(result.result.value.unwrap_or(Value::Null));
+    }
+
+    // Same-origin iframe: access its contentDocument via the frame owner
+    // element (DOM.getFrameOwner) and evaluate through Runtime.callFunctionOn.
+    let session_id = mgr.active_session_id()?.to_string();
+    let owner = mgr
+        .client
+        .send_command(
+            "DOM.getFrameOwner",
+            Some(serde_json::json!({ "frameId": frame_id })),
+            Some(&session_id),
+        )
+        .await?;
+    let backend_node_id = owner
+        .get("backendNodeId")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| format!("Could not resolve frame owner for {}", frame_id))?;
+    let resolved: super::cdp::types::DomResolveNodeResult = mgr
+        .client
+        .send_command_typed(
+            "DOM.resolveNode",
+            &super::cdp::types::DomResolveNodeParams {
+                backend_node_id: Some(backend_node_id),
+                node_id: None,
+                object_group: Some("web-action".to_string()),
+            },
+            Some(&session_id),
+        )
+        .await?;
+    let object_id = resolved
+        .object
+        .object_id
+        .ok_or_else(|| format!("No objectId for frame owner of {}", frame_id))?;
+
+    // The function runs with this = iframe element.  We pass the script as a
+    // string argument so that querySelectorAll is called on the iframe's
+    // contentDocument, not the main document.
+    let wrapper = r#"function(script) {
+        const doc = this.contentDocument;
+        if (!doc) return null;
+        const fn = new doc.defaultView.Function('return (' + script + ')()');
+        return fn.call(doc.defaultView);
+    }"#;
+    let call_result = mgr
+        .client
+        .send_command(
+            "Runtime.callFunctionOn",
+            Some(serde_json::json!({
+                "functionDeclaration": wrapper,
+                "objectId": object_id,
+                "arguments": [{ "value": script }],
+                "returnByValue": true,
+                "awaitPromise": true,
+            })),
+            Some(&session_id),
+        )
+        .await?;
+    if let Some(details) = call_result.get("exceptionDetails") {
+        let msg = details
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown exception");
+        return Err(format!("Evaluation error: {}", msg));
+    }
+    Ok(call_result
+        .get("result")
+        .and_then(|r| r.get("value"))
+        .cloned()
+        .unwrap_or(Value::Null))
+}
+
 async fn handle_find(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
     let selector = cmd
@@ -7278,7 +7410,7 @@ async fn handle_find(cmd: &Value, state: &DaemonState) -> Result<Value, String> 
         serde_json::to_string(selector).unwrap_or_default()
     );
 
-    let result = mgr.evaluate(&js, None).await?;
+    let result = evaluate_js_for_find(mgr, &js, &state.iframe_sessions).await?;
     Ok(json!({ "elements": result, "selector": selector }))
 }
 

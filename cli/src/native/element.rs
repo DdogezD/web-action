@@ -161,7 +161,7 @@ pub fn set_active_frame(frame_id: Option<&str>) {
         .unwrap() = frame_id.map(String::from);
 }
 
-fn active_frame() -> Option<String> {
+pub(crate) fn active_frame() -> Option<String> {
     ACTIVE_FRAME.get().and_then(|m| m.lock().unwrap().clone())
 }
 
