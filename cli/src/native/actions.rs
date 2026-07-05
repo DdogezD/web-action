@@ -6710,51 +6710,71 @@ async fn resolve_frame_id_from_selector(
         return Ok((frame_id.to_string(), label.to_string()));
     }
 
-    // CSS selector path: evaluate JS to find the iframe element and extract
-    // an identity (name, id, or src), then locate it in the frame tree.
-    let tree_result = client
-        .send_command_no_params("Page.getFrameTree", Some(session_id))
-        .await?;
-    let frame_tree = &tree_result["frameTree"];
-
-    let js = format!(
-        r#"(() => {{
-            const el = document.querySelector({});
-            if (!el) return null;
-            if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {{
-                return el.name || el.id || el.src || null;
-            }}
-            return null;
-        }})()"#,
+    // CSS selector path: evaluate the selector as a DOM query.  If it
+    // resolves to an IFRAME/FRAME element, resolve the child frame ID
+    // through DOM.describeNode (which returns contentDocument.frameId —
+    // the same key used by iframe_sessions for cross-origin frames).
+    let css_js = format!(
+        "document.querySelector({})",
         serde_json::to_string(selector).unwrap_or_default()
     );
-    let result = client
-        .send_command(
+    let css_result: super::cdp::types::EvaluateResult = client
+        .send_command_typed(
             "Runtime.evaluate",
-            Some(serde_json::json!({
-                "expression": js,
-                "returnByValue": true,
-                "awaitPromise": false,
-            })),
+            &super::cdp::types::EvaluateParams {
+                expression: css_js,
+                return_by_value: Some(false),
+                await_promise: Some(false),
+            },
             Some(session_id),
         )
         .await?;
-
-    let identity = result
-        .get("result")
-        .and_then(|r| r.get("value"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    if let Some(ref ident) = identity {
-        if let Some(frame_id) = find_frame_in_tree(frame_tree, Some(ident.as_str()), None) {
-            return Ok((frame_id, ident.clone()));
+    if let Some(ref object_id) = css_result.result.object_id {
+        let describe: Value = client
+            .send_command(
+                "DOM.describeNode",
+                Some(serde_json::json!({ "objectId": object_id, "depth": 1 })),
+                Some(session_id),
+            )
+            .await?;
+        let node_name = describe
+            .get("node")
+            .and_then(|n| n.get("nodeName"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if node_name == "IFRAME" || node_name == "FRAME" {
+            if let Some(fid) = describe
+                .get("node")
+                .and_then(|n| n.get("contentDocument"))
+                .and_then(|cd| cd.get("frameId"))
+                .and_then(|v| v.as_str())
+            {
+                let label = describe
+                    .get("node")
+                    .and_then(|n| n.get("attributes"))
+                    .and_then(|a| a.as_array())
+                    .and_then(|attrs| {
+                        attrs
+                            .iter()
+                            .enumerate()
+                            .find(|(_, v)| v.as_str() == Some("name"))
+                            .and_then(|(i, _)| attrs.get(i + 1))
+                            .and_then(|v| v.as_str())
+                    })
+                    .unwrap_or(selector);
+                return Ok((fid.to_string(), label.to_string()));
+            }
         }
     }
 
     // Try matching the selector string directly as a frame name.
     // This handles selectors that are not valid CSS (e.g. an iframe's
     // `name` attribute like `--frame "dynamic-frame"`).
+    let tree_result = client
+        .send_command_no_params("Page.getFrameTree", Some(session_id))
+        .await?;
+    let frame_tree = &tree_result["frameTree"];
+
     if let Some(frame_id) = find_frame_in_tree(frame_tree, Some(selector), None) {
         return Ok((frame_id, selector.to_string()));
     }
@@ -6766,39 +6786,53 @@ async fn resolve_frame_id_from_selector(
 
     // The selector string may be the iframe's accessible name (title
     // attribute), which is what snapshot frame boundary labels show.
-    // Search for an iframe whose title attribute matches.
-    let title_js = format!(
-        r#"(() => {{
-            const el = document.querySelector({title_sel}) || document.querySelector({aria_sel});
-            if (!el || (el.tagName !== 'IFRAME' && el.tagName !== 'FRAME')) return null;
-            return el.name || el.id || el.src || null;
-        }})()"#,
+    // Resolve through DOM.describeNode to get the contentDocument.frameId
+    // (which is the key used by iframe_sessions for cross-origin iframes)
+    // instead of the Page.getFrameTree frame.id which may differ.
+    let title_resolve_js = format!(
+        "document.querySelector({title_sel}) || document.querySelector({aria_sel})",
         title_sel = serde_json::to_string(&format!("iframe[title='{}']", selector)).unwrap_or_default(),
         aria_sel = serde_json::to_string(&format!("iframe[aria-label='{}']", selector)).unwrap_or_default(),
     );
-    let title_result = client
-        .send_command(
+    let title_obj_result: super::cdp::types::EvaluateResult = client
+        .send_command_typed(
             "Runtime.evaluate",
-            Some(serde_json::json!({
-                "expression": title_js,
-                "returnByValue": true,
-                "awaitPromise": false,
-            })),
+            &super::cdp::types::EvaluateParams {
+                expression: title_resolve_js,
+                return_by_value: Some(false),
+                await_promise: Some(false),
+            },
             Some(session_id),
         )
         .await?;
-    let title_identity = title_result
-        .get("result")
-        .and_then(|r| r.get("value"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    if let Some(ref ident) = title_identity {
-        // The identity from the DOM may be a URL (src) or a name. Try both.
-        if let Some(frame_id) = find_frame_in_tree(frame_tree, Some(ident.as_str()), None) {
-            return Ok((frame_id, selector.to_string()));
-        }
-        if let Some(frame_id) = find_frame_in_tree(frame_tree, None, Some(ident.as_str())) {
-            return Ok((frame_id, selector.to_string()));
+    if let Some(ref object_id) = title_obj_result.result.object_id {
+        let describe: Value = client
+            .send_command(
+                "DOM.describeNode",
+                Some(serde_json::json!({ "objectId": object_id, "depth": 1 })),
+                Some(session_id),
+            )
+            .await?;
+        let node_name = describe
+            .get("node")
+            .and_then(|n| n.get("nodeName"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if node_name == "IFRAME" || node_name == "FRAME" {
+            let frame_id = describe
+                .get("node")
+                .and_then(|n| n.get("contentDocument"))
+                .and_then(|cd| cd.get("frameId"))
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    describe
+                        .get("node")
+                        .and_then(|n| n.get("frameId"))
+                        .and_then(|v| v.as_str())
+                });
+            if let Some(fid) = frame_id {
+                return Ok((fid.to_string(), selector.to_string()));
+            }
         }
     }
 
