@@ -1781,11 +1781,20 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
                     );
                 }
             }
-            // Switch to the named tab
-            if let Ok(tab_id) = mgr.resolve_tab_ref(&crate::native::browser::TabRef::Label(tab_name.to_string())) {
-                let index = mgr.page_index_by_tab_id(tab_id);
-                if let Some(idx) = index {
-                    mgr.set_active_page_index(idx);
+            // Switch to the named tab — unless the user hasn't specified a
+            // tabname AND the currently active tab is already a different one.
+            // This lets `tab <tN>` stick instead of being overridden on every
+            // subsequent command.  Explicit --tabname always switches.
+            let explicit_tabname = cmd.get("tabName").and_then(|v| v.as_str()).is_some();
+            let on_different_tab = mgr.pages_list()
+                .get(mgr.active_page_index())
+                .is_some_and(|p| p.label.as_deref() != Some(tab_name));
+            if explicit_tabname || !on_different_tab {
+                if let Ok(tab_id) = mgr.resolve_tab_ref(&crate::native::browser::TabRef::Label(tab_name.to_string())) {
+                    let index = mgr.page_index_by_tab_id(tab_id);
+                    if let Some(idx) = index {
+                        mgr.set_active_page_index(idx);
+                    }
                 }
             }
         }

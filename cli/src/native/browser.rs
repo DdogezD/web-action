@@ -1159,6 +1159,11 @@ impl BrowserManager {
         self.pages.iter().position(|p| p.tab_id == tab_id)
     }
 
+    /// Get the current active page index.
+    pub fn active_page_index(&self) -> usize {
+        self.active_page_index
+    }
+
     /// Set the active page index (used for tabName routing).
     pub fn set_active_page_index(&mut self, index: usize) {
         if index < self.pages.len() {
