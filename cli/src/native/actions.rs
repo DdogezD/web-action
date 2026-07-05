@@ -6752,6 +6752,13 @@ async fn resolve_frame_id_from_selector(
         }
     }
 
+    // Try matching the selector string directly as a frame name.
+    // This handles selectors that are not valid CSS (e.g. an iframe's
+    // `name` attribute like `--frame "dynamic-frame"`).
+    if let Some(frame_id) = find_frame_in_tree(frame_tree, Some(selector), None) {
+        return Ok((frame_id, selector.to_string()));
+    }
+
     // Try matching by URL substring
     if let Some(frame_id) = find_frame_in_tree(frame_tree, None, Some(selector)) {
         return Ok((frame_id, selector.to_string()));
