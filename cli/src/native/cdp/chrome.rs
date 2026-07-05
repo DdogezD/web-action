@@ -330,13 +330,14 @@ pub fn launch_chrome(options: &LaunchOptions) -> Result<ChromeProcess, String> {
                 last_err = e;
                 if attempt < max_attempts {
                     // Clean up SingletonLock from a previous crashed Chrome
-                    // so the retry can use the same persistent profile.
-                    let singleton_lock = effective_options
-                        .profile
-                        .as_ref()
-                        .map(|p| PathBuf::from(expand_tilde(p)).join("SingletonLock"))
-                        .unwrap_or_else(|| default_profile_dir().join("SingletonLock"));
-                    let _ = std::fs::remove_file(&singleton_lock);
+                    // so the retry can reuse the same profile.  Only touch
+                    // our own default profile; never remove a lock from an
+                    // explicit user-specified --profile path (it could be
+                    // their real Chrome profile).
+                    if effective_options.profile.is_none() {
+                        let _ =
+                            std::fs::remove_file(default_profile_dir().join("SingletonLock"));
+                    }
                     let _ = writeln!(
                         std::io::stderr(),
                         "[chrome] Launch attempt {}/{} failed, retrying in 500ms...",
@@ -458,7 +459,7 @@ fn wait_for_devtools_active_port(
     user_data_dir: &Path,
     deadline: std::time::Instant,
 ) -> Result<String, String> {
-    let poll_interval = Duration::from_millis(50);
+    let mut delay_ms: u64 = 50;
 
     while std::time::Instant::now() <= deadline {
         if let Ok(Some(status)) = child.try_wait() {
@@ -479,7 +480,8 @@ fn wait_for_devtools_active_port(
             return Ok(ws_url);
         }
 
-        std::thread::sleep(poll_interval);
+        std::thread::sleep(Duration::from_millis(delay_ms));
+        delay_ms = (delay_ms * 2).min(500);
     }
 
     Err("Timeout waiting for DevToolsActivePort".to_string())
