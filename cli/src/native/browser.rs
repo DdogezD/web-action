@@ -726,9 +726,9 @@ impl BrowserManager {
         // Runtime.enable is a detection vector: it broadcasts
         // Runtime.executionContextCreated events for every context,
         // which anti-bot scripts can observe via service workers
-        // or timing side-channels. Instead we discover execution
-        // contexts on demand via globalThis evaluation (see
-        // discover_main_context).
+        // or timing side-channels. The Runtime domain auto-enables
+        // on the first Runtime.evaluate call, so explicit enable is
+        // unnecessary for functionality.
         //
         // Resume the target if it is paused waiting for the debugger.
         // This is needed for real browser sessions (Chrome 144+) where targets

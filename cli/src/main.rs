@@ -1725,6 +1725,7 @@ fn run_batch(
             .map(|s| s.to_string());
         attach_plugins_to_command(&mut parsed, &flags.plugins);
         attach_restore_config_to_command(&mut parsed, flags);
+        parsed["tabName"] = json!(flags.tabname);
 
         match send_command_with_respawn(parsed, &flags.session, daemon_opts) {
             Ok(resp) => {

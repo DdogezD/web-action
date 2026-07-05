@@ -240,6 +240,8 @@ fn parse_bool_arg(args: &[String], i: usize) -> (bool, bool) {
 /// the next argument to be mis-consumed.
 fn extract_config_path(args: &[String]) -> Option<Option<String>> {
     const FLAGS_WITH_VALUE: &[&str] = &[
+        "--tabname",
+        "-t",
         "--session",
         "--restore-save",
         "--restore-check-url",
