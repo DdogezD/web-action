@@ -61,6 +61,33 @@ web-action open https://mail.google.com  # Still logged in!
 
 Profile directory: `~/.web-action/profiles/main/`
 
+## Cross-Frame Interaction (`--frame`)
+
+When elements live inside an iframe, use `--frame` to target them with CSS selectors without manually switching frames:
+
+```bash
+# snapshot shows iframe boundaries, refs inside iframes work directly
+web-action snapshot -i
+# - Iframe "Payment" [ref=e3]
+#   -- frame "Payment" [ref=e3] --
+#   - textbox "Card number" [ref=e4]
+
+# Ref-based interaction auto-routes to the correct frame (no --frame needed)
+web-action fill @e4 "4111111111111111"
+
+# CSS selectors need --frame to scope into the iframe
+web-action click --frame "#payment-iframe" ".pay-button"
+web-action fill --frame '[name="checkout"]' "[name=cc]" "4111111111111111"
+web-action snapshot --frame "#widget" -i          # scoped snapshot
+```
+
+`--frame` accepts:
+- A CSS selector for the iframe element (`"#payment-iframe"`, `'[name="form"]'`)
+- An element ref pointing to an iframe (`@e3`)
+- An iframe name or URL substring (`"payment"`, `"checkout.html"`)
+
+The frame context only lasts for that one command; subsequent commands revert to the main frame.
+
 ## Multi-Tab Isolation (`--tabname`)
 
 Multiple CLI clients can operate independent tabs in the same browser instance.

@@ -492,7 +492,7 @@ pub async fn take_snapshot(
     // We only recurse from the main frame (frame_id == None) to avoid
     // unbounded depth; nested iframes within iframes are not expanded.
     if frame_id.is_none() {
-        let mut iframe_snapshots: Vec<(String, String)> = Vec::new(); // (ref_id, child_snapshot)
+        let mut iframe_snapshots: Vec<(String, String, String)> = Vec::new(); // (ref_id, label, child_snapshot)
         for node in tree_nodes.iter() {
             if node.role != "Iframe" || !node.has_ref {
                 continue;
@@ -501,6 +501,14 @@ pub async fn take_snapshot(
                 continue;
             };
             let ref_id = node.ref_id.as_deref().unwrap_or("");
+            // Build a human-readable label for the frame boundary annotation.
+            // Use the accessibility tree name (typically the iframe's title or
+            // name attribute); fall back to the ref_id when the name is empty.
+            let frame_label = if !node.name.is_empty() {
+                format!("\"{}\" [ref={}]", node.name, ref_id)
+            } else {
+                format!("[ref={}]", ref_id)
+            };
             if let Ok(child_fid) = resolve_iframe_frame_id(client, session_id, bid).await {
                 // Snapshot the child frame; errors are silently ignored
                 // (e.g. cross-origin iframes)
@@ -518,14 +526,16 @@ pub async fn take_snapshot(
                         && child_text != "(empty page)"
                         && child_text != "(no interactive elements)"
                     {
-                        iframe_snapshots.push((ref_id.to_string(), child_text));
+                        iframe_snapshots.push((ref_id.to_string(), frame_label, child_text));
                     }
                 }
             }
         }
 
-        // Insert each child snapshot after its Iframe line in the output
-        for (ref_id, child_text) in iframe_snapshots {
+        // Insert each child snapshot after its Iframe line in the output,
+        // with a frame boundary marker so AI agents can see which elements
+        // belong to which frame.
+        for (ref_id, frame_label, child_text) in iframe_snapshots {
             let marker = format!("[ref={}]", ref_id);
             if let Some(pos) = output.find(&marker) {
                 // Find the end of the Iframe line
@@ -540,6 +550,8 @@ pub async fn take_snapshot(
                 let child_indent = iframe_indent + 2; // one level deeper
                 let prefix = " ".repeat(child_indent);
 
+                let boundary = format!("{}-- frame {} --\n", prefix, frame_label);
+
                 let indented_child: String = child_text
                     .lines()
                     .map(|line| format!("{}{}\n", prefix, line))
@@ -548,9 +560,10 @@ pub async fn take_snapshot(
                 // Ensure there's a newline to insert after
                 if line_end == output.len() {
                     output.push('\n');
+                    output.push_str(&boundary);
                     output.push_str(&indented_child);
                 } else {
-                    output.insert_str(line_end + 1, &indented_child);
+                    output.insert_str(line_end + 1, &format!("{}{}", boundary, indented_child));
                 }
             }
         }

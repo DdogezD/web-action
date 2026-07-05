@@ -1861,6 +1861,35 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
         }
     }
 
+    // Handle --frame flag: temporarily switch to the resolved iframe for this command.
+    // When the command completes, the previous frame context is restored so
+    // subsequent commands are not affected.
+    let (frame_switched, saved_frame_id) = if let Some(fs) = cmd
+        .get("frame")
+        .and_then(|v| v.as_str())
+    {
+        match state.browser.as_ref() {
+            Some(mgr) => match mgr.active_session_id() {
+                Ok(sid) => {
+                    match resolve_frame_id_from_selector(&mgr.client, &sid, fs, &state.ref_map)
+                        .await
+                    {
+                        Ok((frame_id, _label)) => {
+                            let prev = state.active_frame_id.replace(frame_id);
+                            super::element::set_active_frame(state.active_frame_id.as_deref());
+                            (true, prev)
+                        }
+                        Err(e) => return error_response(&id, &e),
+                    }
+                }
+                Err(e) => return error_response(&id, &e),
+            },
+            None => return error_response(&id, "Browser not launched"),
+        }
+    } else {
+        (false, None)
+    };
+
     let result = match action {
         "launch" => handle_launch(cmd, state).await,
         "navigate" => handle_navigate(cmd, state).await,
@@ -2028,6 +2057,12 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
         "mouseup" => handle_mouseup(cmd, state).await,
         _ => Err(format!("Not yet implemented: {}", action)),
     };
+
+    // Restore the previous frame context when --frame was used.
+    if frame_switched {
+        state.active_frame_id = saved_frame_id;
+        super::element::set_active_frame(state.active_frame_id.as_deref());
+    }
 
     if result.is_ok() && should_validate_restore_after_action(action) {
         validate_restore_if_pending(state).await;
@@ -6606,13 +6641,159 @@ async fn handle_waitforfunction(cmd: &Value, state: &DaemonState) -> Result<Valu
 }
 
 // ---------------------------------------------------------------------------
+// Frame resolution helpers
+// ---------------------------------------------------------------------------
+
+/// Resolve a frame selector to a frame ID, returning `(frame_id, label)`.
+/// The selector can be a ref (`@e3`), a CSS selector, or an iframe name/URL
+/// substring. Used by both `handle_frame` and the `--frame` flag on commands.
+async fn resolve_frame_id_from_selector(
+    client: &CdpClient,
+    session_id: &str,
+    selector: &str,
+    ref_map: &RefMap,
+) -> Result<(String, String), String> {
+    // Ref resolution: use the ref map entry + DOM.describeNode to get the
+    // iframe element's child frame ID.
+    if let Some(ref_id) = super::element::parse_ref(selector) {
+        let entry = ref_map
+            .get(&ref_id)
+            .ok_or_else(|| format!("Unknown ref: {}", ref_id))?;
+        let backend_node_id = entry
+            .backend_node_id
+            .ok_or_else(|| format!("Ref {} has no backend node id", ref_id))?;
+
+        let describe: Value = client
+            .send_command(
+                "DOM.describeNode",
+                Some(serde_json::json!({ "backendNodeId": backend_node_id, "depth": 1 })),
+                Some(session_id),
+            )
+            .await?;
+
+        let node_name = describe
+            .get("node")
+            .and_then(|n| n.get("nodeName"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if node_name != "IFRAME" && node_name != "FRAME" {
+            return Err("Ref does not point to an iframe element".to_string());
+        }
+
+        let frame_id = describe
+            .get("node")
+            .and_then(|n| n.get("contentDocument"))
+            .and_then(|cd| cd.get("frameId"))
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                describe
+                    .get("node")
+                    .and_then(|n| n.get("frameId"))
+                    .and_then(|v| v.as_str())
+            })
+            .ok_or("Could not resolve frame ID for iframe element")?;
+
+        let label = describe
+            .get("node")
+            .and_then(|n| n.get("attributes"))
+            .and_then(|a| a.as_array())
+            .and_then(|attrs| {
+                attrs
+                    .iter()
+                    .enumerate()
+                    .find(|(_, v)| v.as_str() == Some("name"))
+                    .and_then(|(i, _)| attrs.get(i + 1))
+                    .and_then(|v| v.as_str())
+            })
+            .unwrap_or(&ref_id);
+
+        return Ok((frame_id.to_string(), label.to_string()));
+    }
+
+    // CSS selector path: evaluate JS to find the iframe element and extract
+    // an identity (name, id, or src), then locate it in the frame tree.
+    let tree_result = client
+        .send_command_no_params("Page.getFrameTree", Some(session_id))
+        .await?;
+    let frame_tree = &tree_result["frameTree"];
+
+    let js = format!(
+        r#"(() => {{
+            const el = document.querySelector({});
+            if (!el) return null;
+            if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {{
+                return el.name || el.id || el.src || null;
+            }}
+            return null;
+        }})()"#,
+        serde_json::to_string(selector).unwrap_or_default()
+    );
+    let result = client
+        .send_command(
+            "Runtime.evaluate",
+            Some(serde_json::json!({
+                "expression": js,
+                "returnByValue": true,
+                "awaitPromise": false,
+            })),
+            Some(session_id),
+        )
+        .await?;
+
+    let identity = result
+        .get("result")
+        .and_then(|r| r.get("value"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    if let Some(ref ident) = identity {
+        if let Some(frame_id) = find_frame_in_tree(frame_tree, Some(ident.as_str()), None) {
+            return Ok((frame_id, ident.clone()));
+        }
+    }
+
+    // Try matching by URL substring
+    if let Some(frame_id) = find_frame_in_tree(frame_tree, None, Some(selector)) {
+        return Ok((frame_id, selector.to_string()));
+    }
+
+    Err(format!("Frame not found for selector: {}", selector))
+}
+
+/// Recursively search the `Page.getFrameTree` response for a frame matching
+/// the given name or URL substring. Returns the frame's CDP frame ID.
+fn find_frame_in_tree(tree: &Value, name: Option<&str>, url: Option<&str>) -> Option<String> {
+    let frame = tree.get("frame")?;
+    let frame_name = frame.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let frame_url = frame.get("url").and_then(|v| v.as_str()).unwrap_or("");
+    let frame_id = frame.get("id").and_then(|v| v.as_str())?;
+
+    if let Some(n) = name {
+        if frame_name == n {
+            return Some(frame_id.to_string());
+        }
+    }
+    if let Some(u) = url {
+        if frame_url.contains(u) {
+            return Some(frame_id.to_string());
+        }
+    }
+
+    if let Some(children) = tree.get("childFrames").and_then(|v| v.as_array()) {
+        for child in children {
+            if let Some(id) = find_frame_in_tree(child, name, url) {
+                return Some(id);
+            }
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
 // Frame handlers
 // ---------------------------------------------------------------------------
 
 async fn handle_frame(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
-    let mgr = state.browser.as_mut().ok_or("Browser not launched")?;
-    let session_id = mgr.active_session_id()?.to_string();
-
     let selector = cmd.get("selector").and_then(|v| v.as_str());
     let name = cmd.get("name").and_then(|v| v.as_str());
     let url = cmd.get("url").and_then(|v| v.as_str());
@@ -6621,127 +6802,25 @@ async fn handle_frame(cmd: &Value, state: &mut DaemonState) -> Result<Value, Str
         return Err("At least one of 'selector', 'name', or 'url' is required".to_string());
     }
 
+    let mgr = state.browser.as_mut().ok_or("Browser not launched")?;
+    let session_id = mgr.active_session_id()?.to_string();
+
+    // Resolve by selector (ref or CSS)
+    if let Some(sel) = selector {
+        let (frame_id, label) =
+            resolve_frame_id_from_selector(&mgr.client, &session_id, sel, &state.ref_map).await?;
+        state.active_frame_id = Some(frame_id);
+        return Ok(json!({ "frame": label }));
+    }
+
+    // Name or URL-based lookup via frame tree
     let tree_result = mgr
         .client
         .send_command_no_params("Page.getFrameTree", Some(&session_id))
         .await?;
-
-    fn find_frame(tree: &Value, name: Option<&str>, url: Option<&str>) -> Option<String> {
-        let frame = tree.get("frame")?;
-        let frame_name = frame.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        let frame_url = frame.get("url").and_then(|v| v.as_str()).unwrap_or("");
-        let frame_id = frame.get("id").and_then(|v| v.as_str())?;
-
-        if let Some(n) = name {
-            if frame_name == n {
-                return Some(frame_id.to_string());
-            }
-        }
-        if let Some(u) = url {
-            if frame_url.contains(u) {
-                return Some(frame_id.to_string());
-            }
-        }
-
-        if let Some(children) = tree.get("childFrames").and_then(|v| v.as_array()) {
-            for child in children {
-                if let Some(id) = find_frame(child, name, url) {
-                    return Some(id);
-                }
-            }
-        }
-        None
-    }
-
     let frame_tree = &tree_result["frameTree"];
 
-    // If selector is a ref (@e1), resolve the iframe element from the ref map
-    if let Some(sel) = selector {
-        if let Some(ref_id) = super::element::parse_ref(sel) {
-            let entry = state
-                .ref_map
-                .get(&ref_id)
-                .ok_or_else(|| format!("Unknown ref: {}", ref_id))?;
-            let backend_node_id = entry
-                .backend_node_id
-                .ok_or_else(|| format!("Ref {} has no backend node id", ref_id))?;
-
-            // Use DOM.describeNode to resolve the child frame ID directly.
-            // This works reliably for all iframes, including those without
-            // name, id, or src attributes.
-            let describe: Value = mgr
-                .client
-                .send_command(
-                    "DOM.describeNode",
-                    Some(json!({ "backendNodeId": backend_node_id, "depth": 1 })),
-                    Some(&session_id),
-                )
-                .await?;
-
-            // Verify this is an iframe/frame element
-            let node_name = describe
-                .get("node")
-                .and_then(|n| n.get("nodeName"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if node_name != "IFRAME" && node_name != "FRAME" {
-                return Err("Ref does not point to an iframe element".to_string());
-            }
-
-            // Try contentDocument.frameId first (standard for iframes)
-            let frame_id = describe
-                .get("node")
-                .and_then(|n| n.get("contentDocument"))
-                .and_then(|cd| cd.get("frameId"))
-                .and_then(|v| v.as_str())
-                // Fallback: the node itself may carry a frameId
-                .or_else(|| {
-                    describe
-                        .get("node")
-                        .and_then(|n| n.get("frameId"))
-                        .and_then(|v| v.as_str())
-                })
-                .ok_or("Could not resolve frame ID for iframe element")?;
-
-            let label = describe
-                .get("node")
-                .and_then(|n| n.get("attributes"))
-                .and_then(|a| a.as_array())
-                .and_then(|attrs| {
-                    attrs
-                        .iter()
-                        .enumerate()
-                        .find(|(_, v)| v.as_str() == Some("name"))
-                        .and_then(|(i, _)| attrs.get(i + 1))
-                        .and_then(|v| v.as_str())
-                })
-                .unwrap_or(&ref_id);
-
-            state.active_frame_id = Some(frame_id.to_string());
-            return Ok(json!({ "frame": label }));
-        }
-
-        // CSS selector path
-        let js = format!(
-            r#"(() => {{
-                const el = document.querySelector({});
-                if (!el) return null;
-                if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {{
-                    return el.name || el.id || el.src || null;
-                }}
-                return null;
-            }})()"#,
-            serde_json::to_string(sel).unwrap_or_default()
-        );
-        let result = mgr.evaluate(&js, None).await?;
-        let frame_name = result.as_str().ok_or("Could not find frame for selector")?;
-        if let Some(frame_id) = find_frame(frame_tree, Some(frame_name), None) {
-            state.active_frame_id = Some(frame_id);
-            return Ok(json!({ "frame": frame_name }));
-        }
-    }
-
-    if let Some(frame_id) = find_frame(frame_tree, name, url) {
+    if let Some(frame_id) = find_frame_in_tree(frame_tree, name, url) {
         let label = name.or(url).unwrap_or("frame");
         state.active_frame_id = Some(frame_id);
         return Ok(json!({ "frame": label }));

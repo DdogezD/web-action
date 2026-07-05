@@ -308,8 +308,31 @@ fn parse_cookie_header(header: &str) -> Result<Vec<Value>, String> {
     Ok(out)
 }
 
+/// Extract `--frame <selector>` from args, returning the frame selector and
+/// the remaining args with the flag and its value removed.
+fn extract_frame_arg(args: &[String]) -> (Option<String>, Vec<String>) {
+    let mut frame = None;
+    let mut clean = Vec::with_capacity(args.len());
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--frame" {
+            if let Some(sel) = args.get(i + 1) {
+                if sel != "--frame" && !sel.starts_with("--frame=") {
+                    frame = Some(sel.clone());
+                    i += 2;
+                    continue;
+                }
+            }
+        }
+        clean.push(args[i].clone());
+        i += 1;
+    }
+    (frame, clean)
+}
+
 pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError> {
-    let mut result = parse_command_inner(args, flags)?;
+    let (frame_selector, clean_args) = extract_frame_arg(args);
+    let mut result = parse_command_inner(&clean_args, flags)?;
 
     // Inject WEB_ACTION_DEFAULT_TIMEOUT into any wait-family command that
     // doesn't already carry an explicit timeout. Centralised here so that new
@@ -320,6 +343,10 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
                 result["timeout"] = json!(t);
             }
         }
+    }
+
+    if let Some(fs) = frame_selector {
+        result["frame"] = json!(fs);
     }
 
     Ok(result)

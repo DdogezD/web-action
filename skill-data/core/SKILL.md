@@ -320,23 +320,37 @@ See [references/video-recording.md](references/video-recording.md) for codec opt
 
 ### Iframes
 
-Iframes are auto-inlined in the snapshot — their refs work transparently:
+Iframes are auto-inlined in the snapshot with frame boundary annotations. Refs inside iframes work transparently:
 
 ```bash
 web-action snapshot -i
-# @e3 [Iframe] "payment-frame"
+# @e3 [Iframe] "payment-frame" [ref=e3]
+#   -- frame "payment-frame" [ref=e3] --
 #   @e4 [input] "Card number"
 #   @e5 [button] "Pay"
 
+# Ref-based interaction works across frames (no --frame needed)
 web-action fill @e4 "4111111111111111"
 web-action click @e5
 ```
 
-To scope a snapshot to an iframe (for focus or deep nesting):
+For CSS selectors that need to target elements inside an iframe, use `--frame`:
+
+```bash
+# CSS selector scoped to a specific iframe
+web-action click --frame "#payment-iframe" ".pay-button"
+web-action fill --frame '[name="checkout"]' "[name=cc]" "4111111111111111"
+web-action get text --frame "#widget" "h1"
+web-action snapshot --frame '#[name="form"]' -i     # scoped snapshot
+```
+
+`--frame` accepts an iframe CSS selector, element ref (`@e3`), iframe name, or URL substring. The frame scope lasts for that single command only — subsequent commands revert to the main frame without an explicit `frame main`.
+
+To switch context interactively (for multiple actions in the same iframe):
 
 ```bash
 web-action frame @e3      # switch context to the iframe
-web-action snapshot -i
+web-action snapshot -i    # snapshot scoped to that iframe
 web-action frame main     # back to main frame
 ```
 

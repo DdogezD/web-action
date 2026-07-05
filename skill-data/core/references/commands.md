@@ -52,6 +52,8 @@ web-action snapshot -s "#main" # Scope to CSS selector
 
 ## Interactions (use @refs from snapshot)
 
+All interaction commands accept an optional `--frame <selector>` to scope the operation to an iframe. The frame scope lasts for that single command only.
+
 ```bash
 web-action click @e1           # Click
 web-action click @e1 --new-tab # Click and open in new tab
@@ -78,6 +80,8 @@ Clicks fail before dispatch when another element covers the target's click point
 
 ## Get Information
 
+All `get` commands accept an optional `--frame <selector>` to scope the operation to an iframe.
+
 ```bash
 web-action get text @e1        # Get element text
 web-action get html @e1        # Get innerHTML
@@ -92,6 +96,8 @@ web-action get styles @e1      # Get computed styles (font, color, bg, etc.)
 ```
 
 ## Check State
+
+All `is` commands accept an optional `--frame <selector>`.
 
 ```bash
 web-action is visible @e1      # Check if visible
@@ -233,11 +239,12 @@ web-action frame main          # Back to main frame
 
 ### Iframe support
 
-Iframes are detected automatically during snapshots. When the main-frame snapshot runs, `Iframe` nodes are resolved and their content is inlined beneath the iframe element in the output (one level of nesting; iframes within iframes are not expanded).
+Iframes are detected automatically during snapshots. When the main-frame snapshot runs, `Iframe` nodes are resolved and their content is inlined beneath the iframe element in the output with a frame boundary annotation (one level of nesting; iframes within iframes are not expanded).
 
 ```bash
 web-action snapshot -i
-# @e3 [Iframe] "payment-frame"
+# @e3 [Iframe] "payment-frame" [ref=e3]
+#   -- frame "payment-frame" [ref=e3] --
 #   @e4 [input] "Card number"
 #   @e5 [button] "Pay"
 
@@ -245,16 +252,18 @@ web-action snapshot -i
 web-action fill @e4 "4111111111111111"
 web-action click @e5
 
-# Or switch frame context for scoped snapshots
+# CSS selectors scoped to an iframe with --frame (single-command, auto-reverts)
+web-action click --frame "#payment-iframe" ".pay-button"
+web-action fill --frame '[name="checkout"]' "[name=cc]" "4111111111111111"
+web-action snapshot --frame "#widget" -i      # scoped snapshot
+
+# Or switch frame context interactively for multiple scoped actions
 web-action frame @e3               # Switch using element ref
 web-action snapshot -i             # Snapshot scoped to that iframe
 web-action frame main              # Return to main frame
 ```
 
-The `frame` command accepts:
-- **Element refs** — `frame @e3` resolves the ref to an iframe element
-- **CSS selectors** — `frame "#payment-iframe"` finds the iframe by selector
-- **Frame name/URL** — matches against the browser's frame tree
+`--frame` accepts an iframe CSS selector, element ref (`@e3`), iframe name, or URL substring. The frame scope lasts for that single command only. The `frame` command accepts the same selector types and sets the frame context for all subsequent commands until `frame main`.
 
 ## Dialogs
 

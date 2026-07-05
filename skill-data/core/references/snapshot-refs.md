@@ -164,12 +164,13 @@ web-action snapshot @e9
 
 ## Iframes
 
-Snapshots automatically detect and inline iframe content. When the main-frame snapshot runs, each `Iframe` node is resolved and its child accessibility tree is included directly beneath it in the output. Refs assigned to elements inside iframes carry frame context, so interactions like `click`, `fill`, and `type` work without manually switching frames.
+Snapshots automatically detect and inline iframe content. When the main-frame snapshot runs, each `Iframe` node is resolved, its child accessibility tree is included directly beneath it in the output, and a frame boundary annotation is inserted to visually separate iframe content from the surrounding page. Refs assigned to elements inside iframes carry frame context, so interactions like `click`, `fill`, and `type` work without manually switching frames.
 
 ```bash
 web-action snapshot -i
 # @e1 [heading] "Checkout"
-# @e2 [Iframe] "payment-frame"
+# @e2 [Iframe] "payment-frame" [ref=e2]
+#   -- frame "payment-frame" [ref=e2] --
 #   @e3 [input] "Card number"
 #   @e4 [input] "Expiry"
 #   @e5 [button] "Pay"
@@ -179,13 +180,18 @@ web-action snapshot -i
 web-action fill @e3 "4111111111111111"
 web-action fill @e4 "12/28"
 web-action click @e5
+
+# CSS selectors can target iframe content with --frame
+web-action click --frame "#payment-iframe" ".pay-button"
+web-action snapshot --frame '#[name="form"]' -i    # snapshot scoped to iframe
 ```
 
 **Key details:**
+- Frame boundary annotations (`-- frame "name" [ref=eN] --`) clearly mark where iframe content begins
 - Only one level of iframe nesting is expanded (iframes within iframes are not recursed)
 - Cross-origin iframes that block accessibility tree access are silently skipped
 - Empty iframes or iframes with no interactive content are omitted from the output
-- To scope a snapshot to a single iframe, use `frame @ref` then `snapshot -i`
+- To scope a snapshot to a single iframe, use `frame @ref` then `snapshot -i`, or `snapshot --frame '<selector>' -i`
 
 ## Troubleshooting
 
