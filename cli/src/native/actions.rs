@@ -325,7 +325,7 @@ pub struct DaemonState {
     launch_hash: Option<u64>,
     /// Browser engine name (e.g. "chrome", "lightpanda") for observability.
     pub engine: String,
-    /// Default timeout for wait operations, from AGENT_BROWSER_DEFAULT_TIMEOUT env var.
+    /// Default timeout for wait operations, from WEB_ACTION_DEFAULT_TIMEOUT env var.
     pub default_timeout_ms: u64,
     /// Last viewport settings (width, height, deviceScaleFactor, mobile),
     /// re-applied to new contexts (e.g., recording).
@@ -348,19 +348,19 @@ impl DaemonState {
             backend_type: BackendType::Cdp,
             ref_map: RefMap::new(),
             domain_filter: Arc::new(RwLock::new(
-                env::var("AGENT_BROWSER_ALLOWED_DOMAINS")
+                env::var("WEB_ACTION_ALLOWED_DOMAINS")
                     .ok()
                     .filter(|s| !s.is_empty())
                     .map(|s| DomainFilter::new(&s)),
             )),
             event_tracker: EventTracker::new(),
-            session_name: env::var("AGENT_BROWSER_SESSION_NAME").ok(),
-            restore_save: env::var("AGENT_BROWSER_RESTORE_SAVE")
+            session_name: env::var("WEB_ACTION_SESSION_NAME").ok(),
+            restore_save: env::var("WEB_ACTION_RESTORE_SAVE")
                 .ok()
                 .unwrap_or_else(|| "auto".to_string()),
-            restore_check_url: env::var("AGENT_BROWSER_RESTORE_CHECK_URL").ok(),
-            restore_check_text: env::var("AGENT_BROWSER_RESTORE_CHECK_TEXT").ok(),
-            restore_check_fn: env::var("AGENT_BROWSER_RESTORE_CHECK_FN").ok(),
+            restore_check_url: env::var("WEB_ACTION_RESTORE_CHECK_URL").ok(),
+            restore_check_text: env::var("WEB_ACTION_RESTORE_CHECK_TEXT").ok(),
+            restore_check_fn: env::var("WEB_ACTION_RESTORE_CHECK_FN").ok(),
             restore_status: "not_configured".to_string(),
             restore_status_detail: None,
             restore_loaded_path: None,
@@ -368,7 +368,7 @@ impl DaemonState {
             restore_validation_pending: false,
             restore_save_status: "not_attempted".to_string(),
             restore_saved_path: None,
-            session_id: env::var("AGENT_BROWSER_SESSION").unwrap_or_else(|_| "default".to_string()),
+            session_id: env::var("WEB_ACTION_SESSION").unwrap_or_else(|_| "default".to_string()),
             tracing_state: TracingState::new(),
             recording_state: RecordingState::new(),
             event_rx: None,
@@ -392,17 +392,17 @@ impl DaemonState {
             pending_dialog: None,
             pending_pointer_release: None,
             auto_dialog: !matches!(
-                env::var("AGENT_BROWSER_NO_AUTO_DIALOG").as_deref(),
+                env::var("WEB_ACTION_NO_AUTO_DIALOG").as_deref(),
                 Ok("1" | "true" | "yes")
             ),
             stream_client: None,
             stream_server: None,
             launch_hash: None,
-            engine: env::var("AGENT_BROWSER_ENGINE").unwrap_or_else(|_| "chrome".to_string()),
+            engine: env::var("WEB_ACTION_ENGINE").unwrap_or_else(|_| "chrome".to_string()),
             // README documents 25s, intentionally below the CLI's 30s IPC
             // read timeout so the daemon reports a proper timeout error
             // instead of the client dying with EAGAIN and retrying.
-            default_timeout_ms: env::var("AGENT_BROWSER_DEFAULT_TIMEOUT")
+            default_timeout_ms: env::var("WEB_ACTION_DEFAULT_TIMEOUT")
                 .ok()
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(25_000),
@@ -414,7 +414,7 @@ impl DaemonState {
     }
 
     /// Extract the timeout from a command JSON, falling back to the
-    /// configured `default_timeout_ms` (from `AGENT_BROWSER_DEFAULT_TIMEOUT`).
+    /// configured `default_timeout_ms` (from `WEB_ACTION_DEFAULT_TIMEOUT`).
     /// All wait-family handlers should use this instead of reading the
     /// timeout field and providing their own fallback.
     fn timeout_ms(&self, cmd: &Value) -> u64 {
@@ -1213,7 +1213,7 @@ impl DaemonState {
                 }
                 Err(broadcast::error::TryRecvError::Empty) => break,
                 Err(broadcast::error::TryRecvError::Lagged(n)) => {
-                    eprintln!("[agent-browser] Warning: CDP event buffer overflowed, {} events dropped. Network requests may be missing from HAR output.", n);
+                    eprintln!("[web-action] Warning: CDP event buffer overflowed, {} events dropped. Network requests may be missing from HAR output.", n);
                     continue;
                 }
                 Err(broadcast::error::TryRecvError::Closed) => {
@@ -1562,7 +1562,7 @@ fn policy_actions_for_command(
         }
     } else if !skip_launch_action(action) && needs_implicit_launch {
         let plugins = plugins_from_command_or_env(cmd);
-        let provider_launch = env::var("AGENT_BROWSER_PROVIDER")
+        let provider_launch = env::var("WEB_ACTION_PROVIDER")
             .ok()
             .map(|provider| provider.to_lowercase())
             .filter(|provider| !provider.is_empty() && provider != "ios" && provider != "safari");
@@ -1693,7 +1693,7 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
         }
     }
 
-    // Check AGENT_BROWSER_CONFIRM_ACTIONS (category-based, independent of policy file)
+    // Check WEB_ACTION_CONFIRM_ACTIONS (category-based, independent of policy file)
     if action != "confirm" && action != "deny" {
         if let Some(ref ca) = state.confirm_actions {
             for policy_action in &policy_actions {
@@ -1746,6 +1746,42 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
         if let Some(ref mut mgr) = state.browser {
             if mgr.page_count() == 0 {
                 let _ = mgr.ensure_page().await;
+            }
+        }
+    }
+
+    // Resolve tabName → tab: find existing label or create new tab.
+    // Must happen AFTER auto-launch so the browser exists.
+    // Tab-named isolation: each --tabname maps to a Chrome tab with that label.
+    // Default "ZEROTABPAGE" provides backward-compatible routing for unnamed commands.
+    let tab_name = cmd
+        .get("tabName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("ZEROTABPAGE");
+    if !skip_launch_action(action) {
+        if let Some(ref mut mgr) = state.browser {
+            if !mgr.has_label(tab_name) {
+                // Reuse the initial unlabeled about:blank tab when possible,
+                // avoiding a wasted tab that would persist for the session lifetime.
+                let pages = mgr.pages_list();
+                if mgr.page_count() == 1
+                    && pages.first().is_some_and(|p| p.label.is_none())
+                {
+                    mgr.relabel_tab(pages[0].tab_id, tab_name);
+                } else if let Err(e) = mgr.tab_new(None, Some(tab_name)).await {
+                    let _ = writeln!(
+                        std::io::stderr(),
+                        "[web-action] Failed to create tab '{}': {}",
+                        tab_name, e
+                    );
+                }
+            }
+            // Switch to the named tab
+            if let Ok(tab_id) = mgr.resolve_tab_ref(&crate::native::browser::TabRef::Label(tab_name.to_string())) {
+                let index = mgr.page_index_by_tab_id(tab_id);
+                if let Some(idx) = index {
+                    mgr.set_active_page_index(idx);
+                }
             }
         }
     }
@@ -2071,7 +2107,7 @@ async fn auto_launch(
     if let Some(ref server) = state.stream_server {
         options.viewport_size = Some(server.viewport().await);
     }
-    let engine = env::var("AGENT_BROWSER_ENGINE").ok();
+    let engine = env::var("WEB_ACTION_ENGINE").ok();
     let enable_features = launch_enable_features_from_env();
     let init_script_paths = launch_init_script_paths_from_env();
 
@@ -2092,7 +2128,7 @@ async fn auto_launch(
     write_engine_file(&state.session_id, &state.engine);
     write_extensions_file(&state.session_id);
 
-    if let Ok(cdp) = env::var("AGENT_BROWSER_CDP") {
+    if let Ok(cdp) = env::var("WEB_ACTION_CDP") {
         let mgr = BrowserManager::connect_cdp(&cdp).await?;
         let hash = launch_hash(
             &options,
@@ -2116,7 +2152,7 @@ async fn auto_launch(
         return Ok(());
     }
 
-    if env::var("AGENT_BROWSER_AUTO_CONNECT").is_ok() {
+    if env::var("WEB_ACTION_AUTO_CONNECT").is_ok() {
         let hash = launch_hash(
             &options,
             &state.plugin_init_scripts,
@@ -2139,11 +2175,11 @@ async fn auto_launch(
         return Ok(());
     }
 
-    // Cloud provider: when AGENT_BROWSER_PROVIDER is set, connect via the
+    // Cloud provider: when WEB_ACTION_PROVIDER is set, connect via the
     // provider API instead of launching a local Chrome instance.  This mirrors
     // the logic in handle_launch() so that auto_launch (triggered by any
     // command arriving before an explicit "launch") honours the provider env.
-    if let Ok(provider) = env::var("AGENT_BROWSER_PROVIDER") {
+    if let Ok(provider) = env::var("WEB_ACTION_PROVIDER") {
         let p = provider.to_lowercase();
         // ios/safari are device providers handled via explicit launch command
         if !p.is_empty() && p != "ios" && p != "safari" {
@@ -2230,13 +2266,13 @@ async fn auto_launch(
     Ok(())
 }
 
-/// Apply AGENT_BROWSER_ENABLE (built-in init scripts like `react-devtools`)
-/// and AGENT_BROWSER_INIT_SCRIPTS (user-provided files) to the browser so the
+/// Apply WEB_ACTION_ENABLE (built-in init scripts like `react-devtools`)
+/// and WEB_ACTION_INIT_SCRIPTS (user-provided files) to the browser so the
 /// scripts are registered before any page JS runs on the next navigation.
 /// Also evaluates each script on the current page (if any) so the effect is
 /// immediate for already-loaded pages.
 fn launch_enable_features_from_env() -> Vec<String> {
-    env::var("AGENT_BROWSER_ENABLE")
+    env::var("WEB_ACTION_ENABLE")
         .ok()
         .map(|raw| {
             raw.split([',', '\n'])
@@ -2248,7 +2284,7 @@ fn launch_enable_features_from_env() -> Vec<String> {
 }
 
 fn launch_init_script_paths_from_env() -> Vec<String> {
-    env::var("AGENT_BROWSER_INIT_SCRIPTS")
+    env::var("WEB_ACTION_INIT_SCRIPTS")
         .ok()
         .map(|raw| {
             raw.split([',', '\n'])
@@ -2317,7 +2353,7 @@ async fn apply_launch_mutator_plugins(
         "session": state.session_id,
         "launchOptions": {
             "headless": options.headless,
-            "engine": env::var("AGENT_BROWSER_ENGINE").unwrap_or_else(|_| "chrome".to_string()),
+            "engine": env::var("WEB_ACTION_ENGINE").unwrap_or_else(|_| "chrome".to_string()),
             "args": options.args.clone(),
             "extensions": options.extensions.clone(),
             "userAgent": options.user_agent.clone(),
@@ -2346,11 +2382,11 @@ async fn apply_launch_mutator_plugins(
 }
 
 fn launch_options_from_env() -> LaunchOptions {
-    let headed = env::var("AGENT_BROWSER_HEADED")
+    let headed = env::var("WEB_ACTION_HEADED")
         .map(|v| v == "1" || v == "true")
         .unwrap_or(false);
 
-    let extensions: Option<Vec<String>> = env::var("AGENT_BROWSER_EXTENSIONS").ok().map(|v| {
+    let extensions: Option<Vec<String>> = env::var("WEB_ACTION_EXTENSIONS").ok().map(|v| {
         v.split([',', '\n'])
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
@@ -2359,16 +2395,16 @@ fn launch_options_from_env() -> LaunchOptions {
 
     LaunchOptions {
         headless: !headed,
-        executable_path: env::var("AGENT_BROWSER_EXECUTABLE_PATH").ok(),
-        proxy: env::var("AGENT_BROWSER_PROXY").ok(),
-        proxy_bypass: env::var("AGENT_BROWSER_PROXY_BYPASS").ok(),
-        proxy_username: env::var("AGENT_BROWSER_PROXY_USERNAME").ok(),
-        proxy_password: env::var("AGENT_BROWSER_PROXY_PASSWORD").ok(),
-        profile: env::var("AGENT_BROWSER_PROFILE").ok(),
-        allow_file_access: env::var("AGENT_BROWSER_ALLOW_FILE_ACCESS")
+        executable_path: env::var("WEB_ACTION_EXECUTABLE_PATH").ok(),
+        proxy: env::var("WEB_ACTION_PROXY").ok(),
+        proxy_bypass: env::var("WEB_ACTION_PROXY_BYPASS").ok(),
+        proxy_username: env::var("WEB_ACTION_PROXY_USERNAME").ok(),
+        proxy_password: env::var("WEB_ACTION_PROXY_PASSWORD").ok(),
+        profile: env::var("WEB_ACTION_PROFILE").ok(),
+        allow_file_access: env::var("WEB_ACTION_ALLOW_FILE_ACCESS")
             .map(|v| v == "1" || v == "true")
             .unwrap_or(false),
-        args: env::var("AGENT_BROWSER_ARGS")
+        args: env::var("WEB_ACTION_ARGS")
             .map(|v| {
                 v.split([',', '\n'])
                     .map(|s| s.trim().to_string())
@@ -2377,13 +2413,13 @@ fn launch_options_from_env() -> LaunchOptions {
             })
             .unwrap_or_default(),
         extensions,
-        storage_state: env::var("AGENT_BROWSER_STATE").ok(),
-        user_agent: env::var("AGENT_BROWSER_USER_AGENT").ok(),
-        ignore_https_errors: env::var("AGENT_BROWSER_IGNORE_HTTPS_ERRORS")
+        storage_state: env::var("WEB_ACTION_STATE").ok(),
+        user_agent: env::var("WEB_ACTION_USER_AGENT").ok(),
+        ignore_https_errors: env::var("WEB_ACTION_IGNORE_HTTPS_ERRORS")
             .map(|v| v == "1" || v == "true")
             .unwrap_or(false),
-        color_scheme: env::var("AGENT_BROWSER_COLOR_SCHEME").ok(),
-        download_path: env::var("AGENT_BROWSER_DOWNLOAD_PATH").ok(),
+        color_scheme: env::var("WEB_ACTION_COLOR_SCHEME").ok(),
+        download_path: env::var("WEB_ACTION_DOWNLOAD_PATH").ok(),
         hide_scrollbars: hide_scrollbars_from_env(),
         viewport_size: None,
         use_real_keychain: false,
@@ -2391,7 +2427,7 @@ fn launch_options_from_env() -> LaunchOptions {
 }
 
 fn hide_scrollbars_from_env() -> bool {
-    env::var("AGENT_BROWSER_HIDE_SCROLLBARS")
+    env::var("WEB_ACTION_HIDE_SCROLLBARS")
         .map(|v| !matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "no" | ""))
         .unwrap_or(true)
 }
@@ -2614,7 +2650,7 @@ async fn load_storage_state_or_rollback(
     Ok(())
 }
 
-/// Load storage state from AGENT_BROWSER_STATE if set.
+/// Load storage state from WEB_ACTION_STATE if set.
 async fn try_load_storage_state(state: &mut DaemonState, path: &Option<String>) {
     let _ = load_storage_state(state, path).await;
 }
@@ -2652,7 +2688,7 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
         .get("engine")
         .and_then(|v| v.as_str())
         .map(String::from)
-        .or_else(|| env::var("AGENT_BROWSER_ENGINE").ok());
+        .or_else(|| env::var("WEB_ACTION_ENGINE").ok());
 
     let mut launch_options = LaunchOptions {
         headless,
@@ -2660,7 +2696,7 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
             .get("executablePath")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .or_else(|| env::var("AGENT_BROWSER_EXECUTABLE_PATH").ok()),
+            .or_else(|| env::var("WEB_ACTION_EXECUTABLE_PATH").ok()),
         proxy: cmd.get("proxy").and_then(|v| {
             v.as_str().map(|s| s.to_string()).or_else(|| {
                 v.get("server")
@@ -2678,13 +2714,13 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
             .and_then(|v| v.get("username"))
             .and_then(|v| v.as_str())
             .map(String::from)
-            .or_else(|| env::var("AGENT_BROWSER_PROXY_USERNAME").ok()),
+            .or_else(|| env::var("WEB_ACTION_PROXY_USERNAME").ok()),
         proxy_password: cmd
             .get("proxy")
             .and_then(|v| v.get("password"))
             .and_then(|v| v.as_str())
             .map(String::from)
-            .or_else(|| env::var("AGENT_BROWSER_PROXY_PASSWORD").ok()),
+            .or_else(|| env::var("WEB_ACTION_PROXY_PASSWORD").ok()),
         profile: cmd
             .get("profile")
             .and_then(|v| v.as_str())
@@ -4447,7 +4483,7 @@ async fn handle_errors(state: &DaemonState) -> Result<Value, String> {
 async fn handle_session_info(state: &DaemonState) -> Result<Value, String> {
     Ok(json!({
         "session": state.session_id,
-        "namespace": env::var("AGENT_BROWSER_NAMESPACE").ok(),
+        "namespace": env::var("WEB_ACTION_NAMESPACE").ok(),
         "socketDir": get_socket_dir().to_string_lossy(),
         "backgroundPid": std::process::id(),
         "browserLaunched": state.browser.is_some(),
@@ -5315,7 +5351,7 @@ async fn handle_pdf(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
         None => {
             let dir = dirs::home_dir()
                 .unwrap_or_else(std::env::temp_dir)
-                .join(".agent-browser")
+                .join(".web-action")
                 .join("tmp")
                 .join("pdfs");
             let _ = std::fs::create_dir_all(&dir);
@@ -6304,7 +6340,7 @@ fn extensions_file_path(session_id: &str) -> PathBuf {
 }
 
 fn write_extensions_file(session_id: &str) {
-    if let Ok(val) = env::var("AGENT_BROWSER_EXTENSIONS") {
+    if let Ok(val) = env::var("WEB_ACTION_EXTENSIONS") {
         let trimmed = val.trim();
         if !trimmed.is_empty() {
             let _ = fs::write(extensions_file_path(session_id), trimmed);
@@ -6834,7 +6870,7 @@ async fn handle_getbyrole(cmd: &Value, state: &mut DaemonState) -> Result<Value,
             const els = document.querySelectorAll('[role="{role}"], {role}');
             for (const el of els) {{
                 if ({name_match}) {{
-                    el.setAttribute('data-agent-browser-located', 'true');
+                    el.setAttribute('data-web-action-located', 'true');
                     return true;
                 }}
             }}
@@ -6868,7 +6904,7 @@ async fn handle_getbyrole(cmd: &Value, state: &mut DaemonState) -> Result<Value,
         return Err(format!("No element found: {}", desc));
     }
 
-    let selector = "[data-agent-browser-located='true']";
+    let selector = "[data-web-action-located='true']";
     let result = execute_subaction(cmd, state, selector).await;
 
     // Clean up the marker attribute
@@ -6876,7 +6912,7 @@ async fn handle_getbyrole(cmd: &Value, state: &mut DaemonState) -> Result<Value,
         if browser.active_session_id().is_ok() {
             let _ = browser
                 .evaluate(
-                    "document.querySelector('[data-agent-browser-located]')?.removeAttribute('data-agent-browser-located')",
+                    "document.querySelector('[data-web-action-located]')?.removeAttribute('data-web-action-located')",
                     None,
                 )
                 .await;
@@ -6930,17 +6966,17 @@ async fn handle_semantic_locator(
                 if (label) {{
                     const forId = label.getAttribute('for');
                     const target = forId ? document.getElementById(forId) : label.querySelector('input,select,textarea');
-                    if (target) {{ target.setAttribute('data-agent-browser-located', 'true'); return true; }}
+                    if (target) {{ target.setAttribute('data-web-action-located', 'true'); return true; }}
                 }}
                 const aria = Array.from(document.querySelectorAll('[aria-label]')).find(el => matches(el.getAttribute('aria-label')));
-                if (aria) {{ aria.setAttribute('data-agent-browser-located', 'true'); return true; }}
+                if (aria) {{ aria.setAttribute('data-web-action-located', 'true'); return true; }}
                 const referenced = Array.from(document.querySelectorAll('[aria-labelledby]')).find(el => {{
                     const text = el.getAttribute('aria-labelledby').split(/\s+/)
                         .map(id => {{ const r = document.getElementById(id); return r ? r.textContent : ''; }})
                         .join(' ');
                     return matches(text);
                 }});
-                if (referenced) {{ referenced.setAttribute('data-agent-browser-located', 'true'); return true; }}
+                if (referenced) {{ referenced.setAttribute('data-web-action-located', 'true'); return true; }}
                 return false;
             }})()"#,
             )
@@ -6948,7 +6984,7 @@ async fn handle_semantic_locator(
         "placeholder" => format!(
             r#"(() => {{
                 const el = document.querySelector('input[placeholder={val}], textarea[placeholder={val}]');
-                if (el) {{ el.setAttribute('data-agent-browser-located', 'true'); return true; }}
+                if (el) {{ el.setAttribute('data-web-action-located', 'true'); return true; }}
                 return false;
             }})()"#,
             val = serde_json::to_string(value).unwrap_or_default(),
@@ -6956,7 +6992,7 @@ async fn handle_semantic_locator(
         "alttext" => format!(
             r#"(() => {{
                 const el = document.querySelector('img[alt={val}], [alt={val}]');
-                if (el) {{ el.setAttribute('data-agent-browser-located', 'true'); return true; }}
+                if (el) {{ el.setAttribute('data-web-action-located', 'true'); return true; }}
                 return false;
             }})()"#,
             val = serde_json::to_string(value).unwrap_or_default(),
@@ -6964,7 +7000,7 @@ async fn handle_semantic_locator(
         "title" => format!(
             r#"(() => {{
                 const el = document.querySelector('[title={val}]');
-                if (el) {{ el.setAttribute('data-agent-browser-located', 'true'); return true; }}
+                if (el) {{ el.setAttribute('data-web-action-located', 'true'); return true; }}
                 return false;
             }})()"#,
             val = serde_json::to_string(value).unwrap_or_default(),
@@ -6972,7 +7008,7 @@ async fn handle_semantic_locator(
         "testid" => format!(
             r#"(() => {{
                 const el = document.querySelector('[data-testid={val}]');
-                if (el) {{ el.setAttribute('data-agent-browser-located', 'true'); return true; }}
+                if (el) {{ el.setAttribute('data-web-action-located', 'true'); return true; }}
                 return false;
             }})()"#,
             val = serde_json::to_string(value).unwrap_or_default(),
@@ -6984,7 +7020,7 @@ async fn handle_semantic_locator(
                     const all = document.querySelectorAll('*');
                     for (const el of all) {{
                         if (el.children.length === 0 && {match_fn}) {{
-                            el.setAttribute('data-agent-browser-located', 'true');
+                            el.setAttribute('data-web-action-located', 'true');
                             return true;
                         }}
                     }}
@@ -7018,13 +7054,13 @@ async fn handle_semantic_locator(
         return Err(format!("No element found by {} '{}'", strategy, value));
     }
 
-    let selector = "[data-agent-browser-located='true']";
+    let selector = "[data-web-action-located='true']";
     let action_result = execute_subaction(cmd, state, selector).await;
 
     if let Some(ref browser) = state.browser {
         let _ = browser
             .evaluate(
-                "document.querySelector('[data-agent-browser-located]')?.removeAttribute('data-agent-browser-located')",
+                "document.querySelector('[data-web-action-located]')?.removeAttribute('data-web-action-located')",
                 None,
             )
             .await;
@@ -7074,7 +7110,7 @@ async fn handle_nth(cmd: &Value, state: &mut DaemonState) -> Result<Value, Strin
             const els = document.querySelectorAll({sel});
             const idx = {idx} < 0 ? els.length + {idx} : {idx};
             if (idx < 0 || idx >= els.length) return false;
-            els[idx].setAttribute('data-agent-browser-located', 'true');
+            els[idx].setAttribute('data-web-action-located', 'true');
             return true;
         }})()"#,
         sel = serde_json::to_string(selector).unwrap_or_default(),
@@ -7107,13 +7143,13 @@ async fn handle_nth(cmd: &Value, state: &mut DaemonState) -> Result<Value, Strin
         ));
     }
 
-    let located = "[data-agent-browser-located='true']";
+    let located = "[data-web-action-located='true']";
     let action_result = execute_subaction(cmd, state, located).await;
 
     if let Some(ref browser) = state.browser {
         let _ = browser
             .evaluate(
-                "document.querySelector('[data-agent-browser-located]')?.removeAttribute('data-agent-browser-located')",
+                "document.querySelector('[data-web-action-located]')?.removeAttribute('data-web-action-located')",
                 None,
             )
             .await;
@@ -7634,7 +7670,7 @@ async fn handle_har_stop(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
     let mut log = json!({
         "version": "1.2",
         "creator": {
-            "name": "agent-browser",
+            "name": "web-action",
             "version": env!("CARGO_PKG_VERSION")
         },
         "entries": entries
@@ -7933,9 +7969,9 @@ fn har_output_path(explicit_path: Option<&str>) -> String {
 
 fn get_har_dir() -> PathBuf {
     if let Some(home) = dirs::home_dir() {
-        home.join(".agent-browser").join("tmp").join("har")
+        home.join(".web-action").join("tmp").join("har")
     } else {
-        std::env::temp_dir().join("agent-browser").join("har")
+        std::env::temp_dir().join("web-action").join("har")
     }
 }
 
@@ -9450,7 +9486,7 @@ mod tests {
             .expect("system clock should be after unix epoch")
             .as_nanos();
         std::env::temp_dir().join(format!(
-            "agent-browser-{label}-{}-{nanos}",
+            "web-action-{label}-{}-{nanos}",
             std::process::id()
         ))
     }
@@ -9628,8 +9664,8 @@ mod tests {
 
     #[test]
     fn test_policy_actions_use_command_plugins_for_auto_launch_mutators() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_PROVIDER"]);
-        guard.remove("AGENT_BROWSER_PROVIDER");
+        let guard = EnvGuard::new(&["WEB_ACTION_PROVIDER"]);
+        guard.remove("WEB_ACTION_PROVIDER");
         let cmd = json!({
             "action": "navigate",
             "id": "policy-plugin-1",
@@ -9637,7 +9673,7 @@ mod tests {
             "plugins": [
                 {
                     "name": "stealth",
-                    "command": "agent-browser-plugin-stealth",
+                    "command": "web-action-plugin-stealth",
                     "capabilities": ["launch.mutate"]
                 }
             ]
@@ -9651,8 +9687,8 @@ mod tests {
 
     #[test]
     fn test_policy_actions_skip_auto_launch_mutators_when_browser_is_healthy() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_PROVIDER"]);
-        guard.remove("AGENT_BROWSER_PROVIDER");
+        let guard = EnvGuard::new(&["WEB_ACTION_PROVIDER"]);
+        guard.remove("WEB_ACTION_PROVIDER");
         let cmd = json!({
             "action": "navigate",
             "id": "policy-plugin-healthy",
@@ -9660,7 +9696,7 @@ mod tests {
             "plugins": [
                 {
                     "name": "stealth",
-                    "command": "agent-browser-plugin-stealth",
+                    "command": "web-action-plugin-stealth",
                     "capabilities": ["launch.mutate"]
                 }
             ]
@@ -9673,8 +9709,8 @@ mod tests {
 
     #[test]
     fn test_policy_actions_use_command_plugins_for_provider_auto_launch() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_PROVIDER"]);
-        guard.set("AGENT_BROWSER_PROVIDER", "browserbox");
+        let guard = EnvGuard::new(&["WEB_ACTION_PROVIDER"]);
+        guard.set("WEB_ACTION_PROVIDER", "browserbox");
         let cmd = json!({
             "action": "navigate",
             "id": "policy-plugin-2",
@@ -9682,12 +9718,12 @@ mod tests {
             "plugins": [
                 {
                     "name": "browserbox",
-                    "command": "agent-browser-plugin-browserbox",
+                    "command": "web-action-plugin-browserbox",
                     "capabilities": ["browser.provider"]
                 },
                 {
                     "name": "stealth",
-                    "command": "agent-browser-plugin-stealth",
+                    "command": "web-action-plugin-stealth",
                     "capabilities": ["launch.mutate"]
                 }
             ]
@@ -9701,8 +9737,8 @@ mod tests {
 
     #[test]
     fn test_policy_actions_use_resolved_provider_plugin_capability() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_PROVIDER"]);
-        guard.set("AGENT_BROWSER_PROVIDER", "browserbox");
+        let guard = EnvGuard::new(&["WEB_ACTION_PROVIDER"]);
+        guard.set("WEB_ACTION_PROVIDER", "browserbox");
         let cmd = json!({
             "action": "navigate",
             "id": "policy-plugin-duplicate-provider",
@@ -9754,8 +9790,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_policy_denies_plugin_action_before_base_confirmation() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_PROVIDER"]);
-        guard.remove("AGENT_BROWSER_PROVIDER");
+        let guard = EnvGuard::new(&["WEB_ACTION_PROVIDER"]);
+        guard.remove("WEB_ACTION_PROVIDER");
         let dir = tempfile::tempdir().unwrap();
         let policy_path = dir.path().join("policy.json");
         fs::write(
@@ -9773,7 +9809,7 @@ mod tests {
             "plugins": [
                 {
                     "name": "stealth",
-                    "command": "agent-browser-plugin-stealth",
+                    "command": "web-action-plugin-stealth",
                     "capabilities": ["launch.mutate"]
                 }
             ]
@@ -9998,8 +10034,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_confirm_rechecks_unapproved_plugin_action() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_PROVIDER"]);
-        guard.remove("AGENT_BROWSER_PROVIDER");
+        let guard = EnvGuard::new(&["WEB_ACTION_PROVIDER"]);
+        guard.remove("WEB_ACTION_PROVIDER");
         let dir = tempfile::tempdir().unwrap();
         let policy_path = dir.path().join("policy.json");
         fs::write(
@@ -10017,7 +10053,7 @@ mod tests {
             "plugins": [
                 {
                     "name": "stealth",
-                    "command": "agent-browser-plugin-stealth",
+                    "command": "web-action-plugin-stealth",
                     "capabilities": ["launch.mutate"]
                 }
             ]
@@ -10060,7 +10096,7 @@ mod tests {
             r#"#!/bin/sh
 printf invoked > "$1"
 cat >/dev/null
-printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"credential":{"username":"user","password":"pass","url":"https://example.com/login"}}'
+printf '%s' '{"protocol":"web-action.plugin.v1","success":true,"credential":{"username":"user","password":"pass","url":"https://example.com/login"}}'
 "#,
         )
         .unwrap();
@@ -10102,7 +10138,7 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"credential":{
             &plugin_path,
             r#"#!/bin/sh
 cat > "$1"
-printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
+printf '%s' '{"protocol":"web-action.plugin.v1","success":true,"data":{}}'
 "#,
         )
         .unwrap();
@@ -10135,14 +10171,14 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
 
     #[tokio::test]
     async fn test_stream_enable_disable_and_status_without_browser() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_SOCKET_DIR", "AGENT_BROWSER_SESSION"]);
+        let guard = EnvGuard::new(&["WEB_ACTION_SOCKET_DIR", "WEB_ACTION_SESSION"]);
         let socket_dir = unique_socket_dir("stream-runtime");
         fs::create_dir_all(&socket_dir).expect("socket dir should be created");
         guard.set(
-            "AGENT_BROWSER_SOCKET_DIR",
+            "WEB_ACTION_SOCKET_DIR",
             socket_dir.to_str().expect("socket dir should be utf-8"),
         );
-        guard.set("AGENT_BROWSER_SESSION", "stream-runtime-session");
+        guard.set("WEB_ACTION_SESSION", "stream-runtime-session");
 
         let mut state = DaemonState::new();
 
@@ -10208,15 +10244,15 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
 
     #[tokio::test]
     async fn test_stream_disable_preserves_existing_screencast_state() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_SOCKET_DIR", "AGENT_BROWSER_SESSION"]);
+        let guard = EnvGuard::new(&["WEB_ACTION_SOCKET_DIR", "WEB_ACTION_SESSION"]);
         let socket_dir = unique_socket_dir("stream-preserve-screencast");
         fs::create_dir_all(&socket_dir).expect("socket dir should be created");
         guard.set(
-            "AGENT_BROWSER_SOCKET_DIR",
+            "WEB_ACTION_SOCKET_DIR",
             socket_dir.to_str().expect("socket dir should be utf-8"),
         );
         guard.set(
-            "AGENT_BROWSER_SESSION",
+            "WEB_ACTION_SESSION",
             "stream-preserve-screencast-session",
         );
 
@@ -10240,14 +10276,14 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
 
     #[tokio::test]
     async fn test_stream_disable_clears_state_when_stream_file_removal_fails() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_SOCKET_DIR", "AGENT_BROWSER_SESSION"]);
+        let guard = EnvGuard::new(&["WEB_ACTION_SOCKET_DIR", "WEB_ACTION_SESSION"]);
         let socket_dir = unique_socket_dir("stream-disable-cleanup");
         fs::create_dir_all(&socket_dir).expect("socket dir should be created");
         guard.set(
-            "AGENT_BROWSER_SOCKET_DIR",
+            "WEB_ACTION_SOCKET_DIR",
             socket_dir.to_str().expect("socket dir should be utf-8"),
         );
-        guard.set("AGENT_BROWSER_SESSION", "stream-disable-cleanup-session");
+        guard.set("WEB_ACTION_SESSION", "stream-disable-cleanup-session");
 
         let mut state = DaemonState::new();
         handle_stream_enable(&json!({ "port": 0 }), &mut state)
@@ -10276,14 +10312,14 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
 
     #[tokio::test]
     async fn test_stream_enable_port_conflict_returns_error() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_SOCKET_DIR", "AGENT_BROWSER_SESSION"]);
+        let guard = EnvGuard::new(&["WEB_ACTION_SOCKET_DIR", "WEB_ACTION_SESSION"]);
         let socket_dir = unique_socket_dir("stream-port-conflict");
         fs::create_dir_all(&socket_dir).expect("socket dir should be created");
         guard.set(
-            "AGENT_BROWSER_SOCKET_DIR",
+            "WEB_ACTION_SOCKET_DIR",
             socket_dir.to_str().expect("socket dir should be utf-8"),
         );
-        guard.set("AGENT_BROWSER_SESSION", "stream-port-conflict-session");
+        guard.set("WEB_ACTION_SESSION", "stream-port-conflict-session");
 
         let listener = std::net::TcpListener::bind("127.0.0.1:0")
             .expect("test should reserve an ephemeral port");
@@ -10330,13 +10366,13 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
     #[tokio::test]
     async fn test_daemon_state_new() {
         let guard = EnvGuard::new(&[
-            "AGENT_BROWSER_ALLOWED_DOMAINS",
-            "AGENT_BROWSER_SESSION_NAME",
-            "AGENT_BROWSER_SESSION",
+            "WEB_ACTION_ALLOWED_DOMAINS",
+            "WEB_ACTION_SESSION_NAME",
+            "WEB_ACTION_SESSION",
         ]);
-        guard.remove("AGENT_BROWSER_ALLOWED_DOMAINS");
-        guard.remove("AGENT_BROWSER_SESSION_NAME");
-        guard.remove("AGENT_BROWSER_SESSION");
+        guard.remove("WEB_ACTION_ALLOWED_DOMAINS");
+        guard.remove("WEB_ACTION_SESSION_NAME");
+        guard.remove("WEB_ACTION_SESSION");
 
         let state = DaemonState::new();
         assert!(state.browser.is_none());
@@ -10438,9 +10474,9 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
 
     #[test]
     fn test_launch_options_from_env_defaults() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_HEADED", "AGENT_BROWSER_HIDE_SCROLLBARS"]);
-        guard.remove("AGENT_BROWSER_HEADED");
-        guard.remove("AGENT_BROWSER_HIDE_SCROLLBARS");
+        let guard = EnvGuard::new(&["WEB_ACTION_HEADED", "WEB_ACTION_HIDE_SCROLLBARS"]);
+        guard.remove("WEB_ACTION_HEADED");
+        guard.remove("WEB_ACTION_HIDE_SCROLLBARS");
         let opts = launch_options_from_env();
         assert!(opts.headless);
         assert!(opts.args.is_empty());
@@ -10450,20 +10486,20 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
 
     #[test]
     fn test_launch_options_from_env_headed_flag() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_HEADED", "AGENT_BROWSER_HIDE_SCROLLBARS"]);
-        guard.set("AGENT_BROWSER_HEADED", "1");
-        guard.remove("AGENT_BROWSER_HIDE_SCROLLBARS");
+        let guard = EnvGuard::new(&["WEB_ACTION_HEADED", "WEB_ACTION_HIDE_SCROLLBARS"]);
+        guard.set("WEB_ACTION_HEADED", "1");
+        guard.remove("WEB_ACTION_HIDE_SCROLLBARS");
         let opts = launch_options_from_env();
         assert!(
             !opts.headless,
-            "AGENT_BROWSER_HEADED=1 should set headless=false"
+            "WEB_ACTION_HEADED=1 should set headless=false"
         );
     }
 
     #[test]
     fn test_launch_options_from_env_hide_scrollbars_false() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_HIDE_SCROLLBARS"]);
-        guard.set("AGENT_BROWSER_HIDE_SCROLLBARS", "false");
+        let guard = EnvGuard::new(&["WEB_ACTION_HIDE_SCROLLBARS"]);
+        guard.set("WEB_ACTION_HIDE_SCROLLBARS", "false");
         let opts = launch_options_from_env();
         assert!(!opts.hide_scrollbars);
     }
@@ -10561,10 +10597,10 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
 
     #[test]
     fn test_write_extensions_file_from_paths_uses_final_extensions() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_SOCKET_DIR", "AGENT_BROWSER_EXTENSIONS"]);
+        let guard = EnvGuard::new(&["WEB_ACTION_SOCKET_DIR", "WEB_ACTION_EXTENSIONS"]);
         let dir = tempfile::tempdir().unwrap();
-        guard.set("AGENT_BROWSER_SOCKET_DIR", dir.path().to_str().unwrap());
-        guard.set("AGENT_BROWSER_EXTENSIONS", "/env/ext");
+        guard.set("WEB_ACTION_SOCKET_DIR", dir.path().to_str().unwrap());
+        guard.set("WEB_ACTION_EXTENSIONS", "/env/ext");
         let extensions = vec![
             " /plugin/ext ".to_string(),
             "".to_string(),
@@ -10579,10 +10615,10 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
 
     #[test]
     fn test_write_extensions_file_from_paths_falls_back_to_env() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_SOCKET_DIR", "AGENT_BROWSER_EXTENSIONS"]);
+        let guard = EnvGuard::new(&["WEB_ACTION_SOCKET_DIR", "WEB_ACTION_EXTENSIONS"]);
         let dir = tempfile::tempdir().unwrap();
-        guard.set("AGENT_BROWSER_SOCKET_DIR", dir.path().to_str().unwrap());
-        guard.set("AGENT_BROWSER_EXTENSIONS", "/env/ext");
+        guard.set("WEB_ACTION_SOCKET_DIR", dir.path().to_str().unwrap());
+        guard.set("WEB_ACTION_EXTENSIONS", "/env/ext");
 
         write_extensions_file_from_paths("metadata-env-test", None);
 
@@ -10592,8 +10628,8 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
 
     #[test]
     fn test_launch_cmd_hide_scrollbars_missing_uses_env_default() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_HIDE_SCROLLBARS"]);
-        guard.set("AGENT_BROWSER_HIDE_SCROLLBARS", "false");
+        let guard = EnvGuard::new(&["WEB_ACTION_HIDE_SCROLLBARS"]);
+        guard.set("WEB_ACTION_HIDE_SCROLLBARS", "false");
 
         assert!(!hide_scrollbars_from_launch_cmd(&json!({
             "action": "launch"
@@ -10602,8 +10638,8 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
 
     #[test]
     fn test_launch_cmd_hide_scrollbars_explicit_overrides_env_default() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_HIDE_SCROLLBARS"]);
-        guard.set("AGENT_BROWSER_HIDE_SCROLLBARS", "false");
+        let guard = EnvGuard::new(&["WEB_ACTION_HIDE_SCROLLBARS"]);
+        guard.set("WEB_ACTION_HIDE_SCROLLBARS", "false");
 
         assert!(hide_scrollbars_from_launch_cmd(&json!({
             "action": "launch",
@@ -10798,7 +10834,7 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
 
         let har: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
         assert_eq!(har["log"]["version"], "1.2");
-        assert_eq!(har["log"]["creator"]["name"], "agent-browser");
+        assert_eq!(har["log"]["creator"]["name"], "web-action");
         assert!(har["log"].get("browser").is_none());
         assert_eq!(har["log"]["entries"][0]["response"]["content"]["size"], 128);
 
@@ -10808,7 +10844,7 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
     #[tokio::test]
     async fn test_execute_har_stop_skips_browser_auto_launch() {
         let path = std::env::temp_dir().join(format!(
-            "agent-browser-har-stop-{}.har",
+            "web-action-har-stop-{}.har",
             unix_timestamp_millis()
         ));
         let mut state = DaemonState::new();
@@ -10860,19 +10896,19 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
 
     #[test]
     fn test_default_timeout_ms_from_env() {
-        let env = EnvGuard::new(&["AGENT_BROWSER_DEFAULT_TIMEOUT"]);
-        // When AGENT_BROWSER_DEFAULT_TIMEOUT is set, DaemonState should use it
-        env.set("AGENT_BROWSER_DEFAULT_TIMEOUT", "3000");
+        let env = EnvGuard::new(&["WEB_ACTION_DEFAULT_TIMEOUT"]);
+        // When WEB_ACTION_DEFAULT_TIMEOUT is set, DaemonState should use it
+        env.set("WEB_ACTION_DEFAULT_TIMEOUT", "3000");
         let state = DaemonState::new();
         assert_eq!(state.default_timeout_ms, 3000);
     }
 
     #[test]
     fn test_default_timeout_ms_fallback() {
-        let env = EnvGuard::new(&["AGENT_BROWSER_DEFAULT_TIMEOUT"]);
-        // When AGENT_BROWSER_DEFAULT_TIMEOUT is unset, DaemonState uses the
+        let env = EnvGuard::new(&["WEB_ACTION_DEFAULT_TIMEOUT"]);
+        // When WEB_ACTION_DEFAULT_TIMEOUT is unset, DaemonState uses the
         // documented 25s default (below the CLI's 30s IPC read timeout).
-        env.remove("AGENT_BROWSER_DEFAULT_TIMEOUT");
+        env.remove("WEB_ACTION_DEFAULT_TIMEOUT");
         let state = DaemonState::new();
         assert_eq!(state.default_timeout_ms, 25_000);
     }
@@ -10931,7 +10967,7 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
     #[allow(clippy::await_holding_lock)]
     async fn test_credentials_roundtrip_via_actions() {
         let _lock = crate::native::auth::AUTH_TEST_MUTEX.lock().unwrap();
-        let key_var = "AGENT_BROWSER_ENCRYPTION_KEY";
+        let key_var = "WEB_ACTION_ENCRYPTION_KEY";
         let original = std::env::var(key_var).ok();
         // SAFETY: AUTH_TEST_MUTEX serializes all test access so no concurrent mutation.
         unsafe { std::env::set_var(key_var, "a".repeat(64)) };
@@ -11237,8 +11273,8 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
 
     #[tokio::test]
     async fn test_auto_dialog_enabled_by_default() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_NO_AUTO_DIALOG"]);
-        std::env::remove_var("AGENT_BROWSER_NO_AUTO_DIALOG");
+        let guard = EnvGuard::new(&["WEB_ACTION_NO_AUTO_DIALOG"]);
+        std::env::remove_var("WEB_ACTION_NO_AUTO_DIALOG");
         let state = DaemonState::new();
         assert!(state.auto_dialog, "auto_dialog should be true by default");
         drop(guard);
@@ -11246,32 +11282,32 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
 
     #[tokio::test]
     async fn test_auto_dialog_disabled_by_env() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_NO_AUTO_DIALOG"]);
-        guard.set("AGENT_BROWSER_NO_AUTO_DIALOG", "1");
+        let guard = EnvGuard::new(&["WEB_ACTION_NO_AUTO_DIALOG"]);
+        guard.set("WEB_ACTION_NO_AUTO_DIALOG", "1");
         let state = DaemonState::new();
         assert!(
             !state.auto_dialog,
-            "auto_dialog should be false when AGENT_BROWSER_NO_AUTO_DIALOG=1"
+            "auto_dialog should be false when WEB_ACTION_NO_AUTO_DIALOG=1"
         );
         drop(guard);
     }
 
     #[tokio::test]
     async fn test_auto_dialog_disabled_by_env_true() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_NO_AUTO_DIALOG"]);
-        guard.set("AGENT_BROWSER_NO_AUTO_DIALOG", "true");
+        let guard = EnvGuard::new(&["WEB_ACTION_NO_AUTO_DIALOG"]);
+        guard.set("WEB_ACTION_NO_AUTO_DIALOG", "true");
         let state = DaemonState::new();
         assert!(
             !state.auto_dialog,
-            "auto_dialog should be false when AGENT_BROWSER_NO_AUTO_DIALOG=true"
+            "auto_dialog should be false when WEB_ACTION_NO_AUTO_DIALOG=true"
         );
         drop(guard);
     }
 
     #[tokio::test]
     async fn test_auto_dialog_not_disabled_by_random_value() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_NO_AUTO_DIALOG"]);
-        guard.set("AGENT_BROWSER_NO_AUTO_DIALOG", "no");
+        let guard = EnvGuard::new(&["WEB_ACTION_NO_AUTO_DIALOG"]);
+        guard.set("WEB_ACTION_NO_AUTO_DIALOG", "no");
         let state = DaemonState::new();
         assert!(
             state.auto_dialog,

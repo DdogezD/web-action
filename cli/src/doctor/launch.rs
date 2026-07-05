@@ -16,21 +16,21 @@ use crate::connection::{cleanup_stale_files, ensure_daemon, send_command, Daemon
 pub(super) fn check(checks: &mut Vec<Check>) {
     let category = "Launch test";
 
-    if env::var("AGENT_BROWSER_PROVIDER").is_ok() {
+    if env::var("WEB_ACTION_PROVIDER").is_ok() {
         checks.push(Check::new(
             "launch.skipped.provider",
             category,
             Status::Info,
-            "Skipped (AGENT_BROWSER_PROVIDER is set; would consume cloud quota)",
+            "Skipped (WEB_ACTION_PROVIDER is set; would consume cloud quota)",
         ));
         return;
     }
-    if env::var("AGENT_BROWSER_CDP").is_ok() {
+    if env::var("WEB_ACTION_CDP").is_ok() {
         checks.push(Check::new(
             "launch.skipped.cdp",
             category,
             Status::Info,
-            "Skipped (AGENT_BROWSER_CDP is set; would attach to a real browser)",
+            "Skipped (WEB_ACTION_CDP is set; would attach to a real browser)",
         ));
         return;
     }
@@ -118,7 +118,7 @@ pub(super) fn check(checks: &mut Vec<Check>) {
                 Status::Fail,
                 format!("Browser launch failed: {}", e),
             )
-            .with_fix("agent-browser install   # or check --debug output"),
+            .with_fix("web-action install   # or check --debug output"),
         );
         return;
     }

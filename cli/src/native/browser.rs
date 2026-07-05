@@ -12,6 +12,63 @@ use super::cdp::lightpanda::{launch_lightpanda, LightpandaLaunchOptions, Lightpa
 use super::cdp::types::*;
 use super::element::{resolve_element_object_id, RefMap};
 
+/// Anti-detection script injected into every page to hide automation indicators.
+/// Based on Patchright research: combines navigator/webdriver spoofing,
+/// service worker stubbing, and runtime detection evasion.
+const STEALTH_SCRIPT: &str = r#"
+// Overwrite the `navigator.webdriver` property
+Object.defineProperty(navigator, 'webdriver', { get: () => false });
+
+// Ensure `window.chrome` exists (normal Chrome has it)
+if (!window.chrome) {
+    window.chrome = { runtime: {} };
+}
+if (!window.chrome.runtime) {
+    window.chrome.runtime = {};
+}
+
+// Overwrite the `navigator.plugins` property (normal Chrome has plugins)
+Object.defineProperty(navigator, 'plugins', {
+    get: () => [1, 2, 3, 4, 5],
+});
+
+// Overwrite `navigator.languages` if missing
+if (!navigator.languages || navigator.languages.length === 0) {
+    Object.defineProperty(navigator, 'languages', {
+        get: () => ['en-US', 'en'],
+    });
+}
+
+// Remove "HeadlessChrome" from user agent if present
+const _origUALookup = Object.getOwnPropertyDescriptor(Navigator.prototype, 'userAgent') ||
+    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(navigator), 'userAgent');
+if (_origUALookup && _origUALookup.get) {
+    const _origUAGetter = _origUALookup.get;
+    Object.defineProperty(navigator, 'userAgent', {
+        get: function() {
+            return _origUAGetter.call(this).replace(/HeadlessChrome/g, 'Chrome');
+        }
+    });
+}
+
+// Overwrite permissions to avoid automation-specific behavior
+const _origPermQuery = window.navigator.permissions.query;
+window.navigator.permissions.query = function(parameters) {
+    if (parameters.name === 'notifications') {
+        return Promise.resolve({ state: Notification.permission, onchange: null });
+    }
+    return _origPermQuery.call(this, parameters);
+};
+
+// Stub service worker registration.
+// Patchright research: the real navigator.serviceWorker.register
+// can be used to fingerprint the browser. A no-op stub prevents
+// detection without breaking functionality.
+if (navigator.serviceWorker) {
+    navigator.serviceWorker.register = async () => { };
+}
+"#;
+
 // ---------------------------------------------------------------------------
 // Launch validation
 // ---------------------------------------------------------------------------
@@ -216,7 +273,7 @@ impl TabRef {
         if input.chars().all(|c| c.is_ascii_digit()) {
             return Err(format!(
                 "Expected a tab id like `t{}` or a label; positional integers are not accepted \
-                 (run `agent-browser tab` to list stable tab ids)",
+                 (run `web-action tab` to list stable tab ids)",
                 input
             ));
         }
@@ -506,6 +563,16 @@ impl BrowserManager {
             .send_command_typed("Target.getTargets", &json!({}), None)
             .await?;
 
+        // In headed mode Chrome creates a default "New Tab" (chrome://newtab/)
+        // which our filter excludes. Find it BEFORE filtering so we can reuse it.
+        let internal_target = result
+            .target_infos
+            .iter()
+            .find(|t| t.target_type == "page"
+                && t.url.starts_with("chrome://")
+                && t.attached.unwrap_or(false))
+            .map(|t| t.target_id.clone());
+
         let page_targets: Vec<TargetInfo> = result
             .target_infos
             .into_iter()
@@ -513,43 +580,69 @@ impl BrowserManager {
             .collect();
 
         if page_targets.is_empty() {
-            // Create a new tab
-            let result: CreateTargetResult = self
-                .client
-                .send_command_typed(
-                    "Target.createTarget",
-                    &CreateTargetParams {
-                        url: "about:blank".to_string(),
-                    },
-                    None,
-                )
-                .await?;
+            let (target_id, session_id) = if let Some(ref internal_id) = internal_target {
+                // Reuse Chrome's default "New Tab" instead of creating a second tab
+                let attach_result: AttachToTargetResult = self
+                    .client
+                    .send_command_typed(
+                        "Target.attachToTarget",
+                        &AttachToTargetParams {
+                            target_id: internal_id.clone(),
+                            flatten: true,
+                        },
+                        None,
+                    )
+                    .await?;
+                // Navigate away from chrome://newtab/
+                let _ = self
+                    .client
+                    .send_command_typed::<_, Value>(
+                        "Page.navigate",
+                        &serde_json::json!({ "url": "about:blank" }),
+                        Some(&attach_result.session_id),
+                    )
+                    .await;
+                (internal_id.clone(), attach_result.session_id)
+            } else {
+                // No existing tabs at all — create one
+                let result: CreateTargetResult = self
+                    .client
+                    .send_command_typed(
+                        "Target.createTarget",
+                        &CreateTargetParams {
+                            url: "about:blank".to_string(),
+                        },
+                        None,
+                    )
+                    .await?;
 
-            let attach_result: AttachToTargetResult = self
-                .client
-                .send_command_typed(
-                    "Target.attachToTarget",
-                    &AttachToTargetParams {
-                        target_id: result.target_id.clone(),
-                        flatten: true,
-                    },
-                    None,
-                )
-                .await?;
+                let attach_result: AttachToTargetResult = self
+                    .client
+                    .send_command_typed(
+                        "Target.attachToTarget",
+                        &AttachToTargetParams {
+                            target_id: result.target_id.clone(),
+                            flatten: true,
+                        },
+                        None,
+                    )
+                    .await?;
+                (result.target_id, attach_result.session_id)
+            };
 
             let tab_id = self.next_tab_id;
             self.next_tab_id += 1;
             self.pages.push(PageInfo {
                 tab_id,
                 label: None,
-                target_id: result.target_id,
-                session_id: attach_result.session_id.clone(),
+                target_id,
+                session_id: session_id.clone(),
                 url: "about:blank".to_string(),
                 title: String::new(),
                 target_type: "page".to_string(),
             });
             self.active_page_index = 0;
-            self.enable_domains(&attach_result.session_id).await?;
+            self.enable_domains(&session_id).await?;
         } else {
             for target in &page_targets {
                 let attach_result: AttachToTargetResult = self
@@ -593,9 +686,14 @@ impl BrowserManager {
         self.client
             .send_command_no_params("Page.enable", Some(session_id))
             .await?;
-        self.client
-            .send_command_no_params("Runtime.enable", Some(session_id))
-            .await?;
+        // NOTE: We intentionally do NOT send Runtime.enable.
+        // Runtime.enable is a detection vector: it broadcasts
+        // Runtime.executionContextCreated events for every context,
+        // which anti-bot scripts can observe via service workers
+        // or timing side-channels. Instead we discover execution
+        // contexts on demand via globalThis evaluation (see
+        // discover_main_context).
+        //
         // Resume the target if it is paused waiting for the debugger.
         // This is needed for real browser sessions (Chrome 144+) where targets
         // are paused after attach until explicitly resumed. No-op otherwise.
@@ -603,6 +701,8 @@ impl BrowserManager {
             .client
             .send_command_no_params("Runtime.runIfWaitingForDebugger", Some(session_id))
             .await;
+        // Inject stealth script to hide automation indicators
+        self.inject_stealth_script(Some(session_id)).await;
         self.client
             .send_command_no_params("Network.enable", Some(session_id))
             .await?;
@@ -629,17 +729,32 @@ impl BrowserManager {
         self.client
             .send_command_no_params("Page.enable", None)
             .await?;
-        self.client
-            .send_command_no_params("Runtime.enable", None)
-            .await?;
+        // NOTE: Intentionally skip Runtime.enable (see enable_domains above).
         let _ = self
             .client
             .send_command_no_params("Runtime.runIfWaitingForDebugger", None)
             .await;
+        self.inject_stealth_script(None).await;
         self.client
             .send_command_no_params("Network.enable", None)
             .await?;
         Ok(())
+    }
+
+    /// Inject anti-detection script via `Page.addScriptToEvaluateOnNewDocument`.
+    /// When `session_id` is None, sends without a session (direct page mode).
+    async fn inject_stealth_script(&self, session_id: Option<&str>) {
+        let _ = self
+            .client
+            .send_command(
+                "Page.addScriptToEvaluateOnNewDocument",
+                Some(serde_json::json!({
+                    "source": STEALTH_SCRIPT,
+                    "worldName": "__web_action_stealth",
+                })),
+                session_id,
+            )
+            .await;
     }
 
     pub fn active_session_id(&self) -> Result<&str, String> {
@@ -980,7 +1095,7 @@ impl BrowserManager {
                     Ok(*id)
                 } else {
                     Err(format!(
-                        "Tab {} not found; run `agent-browser tab` to list open tabs",
+                        "Tab {} not found; run `web-action tab` to list open tabs",
                         format_tab_id(*id)
                     ))
                 }
@@ -992,7 +1107,7 @@ impl BrowserManager {
                 .map(|p| p.tab_id)
                 .ok_or_else(|| {
                     format!(
-                        "No tab with label `{}`; run `agent-browser tab` to list open tabs",
+                        "No tab with label `{}`; run `web-action tab` to list open tabs",
                         name
                     )
                 }),
@@ -1002,6 +1117,29 @@ impl BrowserManager {
     /// Returns true iff a tab already carries the given label.
     pub fn has_label(&self, label: &str) -> bool {
         self.pages.iter().any(|p| p.label.as_deref() == Some(label))
+    }
+
+    /// Find the page index for a given tab_id. Returns None if not found.
+    pub fn page_index_by_tab_id(&self, tab_id: u32) -> Option<usize> {
+        self.pages.iter().position(|p| p.tab_id == tab_id)
+    }
+
+    /// Set the active page index (used for tabName routing).
+    pub fn set_active_page_index(&mut self, index: usize) {
+        if index < self.pages.len() {
+            self.active_page_index = index;
+        }
+    }
+
+    /// Assign a label to an existing tab. No-op if the label is already taken
+    /// or the tab doesn't exist.
+    pub fn relabel_tab(&mut self, tab_id: u32, label: &str) {
+        if self.has_label(label) {
+            return;
+        }
+        if let Some(page) = self.pages.iter_mut().find(|p| p.tab_id == tab_id) {
+            page.label = Some(label.to_string());
+        }
     }
 
     pub async fn tab_new(

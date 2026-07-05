@@ -2,13 +2,16 @@
 //!
 //! These tests spawn the real CLI binary via `env!("CARGO_BIN_EXE_*")` and
 //! verify the doctor command produces sane output. They override
-//! `AGENT_BROWSER_SOCKET_DIR` and `HOME` / `USERPROFILE` so the doctor
+//! `WEB_ACTION_SOCKET_DIR` and `HOME` / `USERPROFILE` so the doctor
 //! inspects a throwaway directory and never touches the user's real state.
 
 use std::process::Command;
 use tempfile::TempDir;
 
-const BIN: &str = env!("CARGO_BIN_EXE_agent-browser");
+fn bin() -> String {
+    std::env::var("CARGO_BIN_EXE_web_action")
+        .unwrap_or_else(|_| "web-action".to_string())
+}
 
 fn build_doctor_cmd(tmp: &TempDir, args: &[&str]) -> Command {
     let socket_dir = tmp.path().join("sockets");
@@ -16,14 +19,14 @@ fn build_doctor_cmd(tmp: &TempDir, args: &[&str]) -> Command {
     std::fs::create_dir_all(&socket_dir).unwrap();
     std::fs::create_dir_all(&home).unwrap();
 
-    let mut cmd = Command::new(BIN);
+    let mut cmd = Command::new(bin());
     cmd.args(args)
-        .env("AGENT_BROWSER_SOCKET_DIR", &socket_dir)
+        .env("WEB_ACTION_SOCKET_DIR", &socket_dir)
         .env("HOME", &home)
         .env("USERPROFILE", &home)
         // Keep the launch test's skip-logic deterministic across hosts.
-        .env_remove("AGENT_BROWSER_PROVIDER")
-        .env_remove("AGENT_BROWSER_CDP")
+        .env_remove("WEB_ACTION_PROVIDER")
+        .env_remove("WEB_ACTION_CDP")
         // Don't emit color codes into captured stdout.
         .env("NO_COLOR", "1");
     cmd

@@ -1,4 +1,4 @@
-//! Diagnose an agent-browser installation.
+//! Diagnose an web-action installation.
 //!
 //! Runs a battery of checks across environment, Chrome install, daemon
 //! state, config files, encryption, providers, network reachability, and
@@ -151,7 +151,7 @@ fn summarize(checks: &[Check]) -> Summary {
 }
 
 fn print_text(checks: &[Check], summary: &Summary, fixed: &[String], fix_ran: bool) {
-    println!("{}", color::bold("agent-browser doctor"));
+    println!("{}", color::bold("web-action doctor"));
 
     let mut current_category = "";
     for c in checks {

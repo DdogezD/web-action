@@ -1,7 +1,7 @@
 //! External plugin protocol support.
 //!
 //! Plugins run out-of-process and communicate over a small stdio JSON protocol.
-//! Core agent-browser keeps ownership of browser automation, policy checks, and
+//! Core web-action keeps ownership of browser automation, policy checks, and
 //! redaction-sensitive flows; credential plugins only resolve secrets on demand.
 
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::io::AsyncWriteExt;
 
-pub const PROTOCOL_VERSION: &str = "agent-browser.plugin.v1";
+pub const PROTOCOL_VERSION: &str = "web-action.plugin.v1";
 pub const TYPE_PLUGIN_MANIFEST: &str = "plugin.manifest";
 pub const CAPABILITY_CREDENTIAL_READ: &str = "credential.read";
 pub const CAPABILITY_BROWSER_PROVIDER: &str = "browser.provider";
@@ -131,7 +131,7 @@ struct PluginManifestResponse {
 }
 
 pub fn plugins_from_env() -> Vec<PluginConfig> {
-    std::env::var("AGENT_BROWSER_PLUGINS")
+    std::env::var("WEB_ACTION_PLUGINS")
         .ok()
         .and_then(|raw| serde_json::from_str::<Vec<PluginConfig>>(&raw).ok())
         .unwrap_or_default()
@@ -590,7 +590,7 @@ fn derive_plugin_name(source: &PluginSource) -> String {
             .unwrap_or(&source.reference)
             .to_string(),
     };
-    raw.strip_prefix("agent-browser-plugin-")
+    raw.strip_prefix("web-action-plugin-")
         .or_else(|| raw.strip_prefix("plugin-"))
         .unwrap_or(&raw)
         .to_string()
@@ -622,9 +622,9 @@ fn validate_plugin_name(name: &str) -> Result<(), String> {
 
 fn config_path_for_scope(scope: &PluginConfigScope) -> Result<PathBuf, String> {
     match scope {
-        PluginConfigScope::Project => Ok(PathBuf::from("agent-browser.json")),
+        PluginConfigScope::Project => Ok(PathBuf::from("web-action.json")),
         PluginConfigScope::Global => dirs::home_dir()
-            .map(|d| d.join(".agent-browser").join("config.json"))
+            .map(|d| d.join(".web-action").join("config.json"))
             .ok_or_else(|| "Could not determine home directory".to_string()),
     }
 }
@@ -826,7 +826,7 @@ pub fn run_plugin_command(args: &[String], plugins: &[PluginConfig], json_output
             if is_core_plugin_entrypoint(request_type) {
                 print_plugin_error(
                     &format!(
-                        "plugin run cannot invoke core plugin entrypoint '{}'; use the dedicated agent-browser command path",
+                        "plugin run cannot invoke core plugin entrypoint '{}'; use the dedicated web-action command path",
                         request_type
                     ),
                     json_output,
@@ -1045,27 +1045,27 @@ mod tests {
 
     #[test]
     fn plugin_add_source_detection_matches_reference_shape() {
-        let npm = parse_plugin_source("agent-browser-plugin-captcha").unwrap();
+        let npm = parse_plugin_source("web-action-plugin-captcha").unwrap();
         assert_eq!(npm.kind, PluginSourceKind::Npm);
-        assert_eq!(npm.install_spec, "agent-browser-plugin-captcha");
-        assert_eq!(npm.source, "npm:agent-browser-plugin-captcha");
+        assert_eq!(npm.install_spec, "web-action-plugin-captcha");
+        assert_eq!(npm.source, "npm:web-action-plugin-captcha");
         assert_eq!(derive_plugin_name(&npm), "captcha");
 
-        let scoped = parse_plugin_source("@acme/agent-browser-plugin-vault").unwrap();
+        let scoped = parse_plugin_source("@acme/web-action-plugin-vault").unwrap();
         assert_eq!(scoped.kind, PluginSourceKind::Npm);
-        assert_eq!(scoped.install_spec, "@acme/agent-browser-plugin-vault");
-        assert_eq!(scoped.source, "npm:@acme/agent-browser-plugin-vault");
+        assert_eq!(scoped.install_spec, "@acme/web-action-plugin-vault");
+        assert_eq!(scoped.source, "npm:@acme/web-action-plugin-vault");
         assert_eq!(derive_plugin_name(&scoped), "vault");
 
-        let github = parse_plugin_source("vercel-labs/agent-browser-plugin-browserbox").unwrap();
+        let github = parse_plugin_source("vercel-labs/web-action-plugin-browserbox").unwrap();
         assert_eq!(github.kind, PluginSourceKind::Github);
         assert_eq!(
             github.install_spec,
-            "github:vercel-labs/agent-browser-plugin-browserbox"
+            "github:vercel-labs/web-action-plugin-browserbox"
         );
         assert_eq!(
             github.source,
-            "github:vercel-labs/agent-browser-plugin-browserbox"
+            "github:vercel-labs/web-action-plugin-browserbox"
         );
         assert_eq!(derive_plugin_name(&github), "browserbox");
     }
@@ -1075,7 +1075,7 @@ mod tests {
         let args = vec![
             "plugin".to_string(),
             "add".to_string(),
-            "agent-browser-plugin-captcha".to_string(),
+            "web-action-plugin-captcha".to_string(),
             "--capability".to_string(),
             "command.run".to_string(),
             "--capability".to_string(),
@@ -1090,7 +1090,7 @@ mod tests {
         assert_eq!(plugin.command, "npx");
         assert_eq!(
             plugin.args,
-            vec!["-y".to_string(), "agent-browser-plugin-captcha".to_string()]
+            vec!["-y".to_string(), "web-action-plugin-captcha".to_string()]
         );
         assert_eq!(
             plugin.capabilities,
@@ -1098,14 +1098,14 @@ mod tests {
         );
         assert_eq!(
             plugin.source.as_deref(),
-            Some("npm:agent-browser-plugin-captcha")
+            Some("npm:web-action-plugin-captcha")
         );
     }
 
     #[test]
     fn plugin_config_upsert_replaces_existing_plugin() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("agent-browser.json");
+        let path = dir.path().join("web-action.json");
         fs::write(
             &path,
             r#"{"headed":true,"plugins":[{"name":"captcha","command":"old","capabilities":["command.run"]}]}"#,
@@ -1115,9 +1115,9 @@ mod tests {
         let plugin = PluginConfig {
             name: "captcha".to_string(),
             command: "npx".to_string(),
-            args: vec!["-y".to_string(), "agent-browser-plugin-captcha".to_string()],
+            args: vec!["-y".to_string(), "web-action-plugin-captcha".to_string()],
             capabilities: vec!["command.run".to_string(), "captcha.solve".to_string()],
-            source: Some("npm:agent-browser-plugin-captcha".to_string()),
+            source: Some("npm:web-action-plugin-captcha".to_string()),
         };
 
         upsert_plugin_config(&path, &plugin).unwrap();
@@ -1128,7 +1128,7 @@ mod tests {
         assert_eq!(plugins.len(), 1);
         assert_eq!(plugins[0]["name"], "captcha");
         assert_eq!(plugins[0]["command"], "npx");
-        assert_eq!(plugins[0]["source"], "npm:agent-browser-plugin-captcha");
+        assert_eq!(plugins[0]["source"], "npm:web-action-plugin-captcha");
         assert_eq!(plugins[0]["capabilities"][1], "captcha.solve");
     }
 
@@ -1138,14 +1138,14 @@ mod tests {
         use crate::test_utils::EnvGuard;
         use std::os::unix::fs::PermissionsExt;
 
-        let _guard = EnvGuard::new(&["AGENT_BROWSER_PLUGINS"]);
+        let _guard = EnvGuard::new(&["WEB_ACTION_PLUGINS"]);
         let dir = tempfile::tempdir().unwrap();
         let plugin_path = dir.path().join("mock-credential-plugin");
         std::fs::write(
             &plugin_path,
             r#"#!/bin/sh
 cat >/dev/null
-printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"credential":{"username":"user","password":"pass","url":"https://example.com/login"}}'
+printf '%s' '{"protocol":"web-action.plugin.v1","success":true,"credential":{"username":"user","password":"pass","url":"https://example.com/login"}}'
 "#,
         )
         .unwrap();
@@ -1160,7 +1160,7 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"credential":{
             ..PluginConfig::default()
         }])
         .unwrap();
-        _guard.set("AGENT_BROWSER_PLUGINS", &registry);
+        _guard.set("WEB_ACTION_PLUGINS", &registry);
 
         let plugins = plugins_from_env();
         let credential = resolve_credential_with_plugins(
@@ -1191,7 +1191,7 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"credential":{
             &plugin_path,
             r#"#!/bin/sh
 cat >/dev/null
-printf '%s' '{"protocol":"agent-browser.plugin.v1","success":false,"error":"secret-token-value"}'
+printf '%s' '{"protocol":"web-action.plugin.v1","success":false,"error":"secret-token-value"}'
 "#,
         )
         .unwrap();
@@ -1233,7 +1233,7 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":false,"error":"secr
             &plugin_path,
             r#"#!/bin/sh
 cat >/dev/null
-printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"browser":{"cdpUrl":"ws://127.0.0.1:9222/devtools/browser/test","directPage":true,"metadata":{"sessionId":"s1"},"cleanup":{"sessionId":"s1"}}}'
+printf '%s' '{"protocol":"web-action.plugin.v1","success":true,"browser":{"cdpUrl":"ws://127.0.0.1:9222/devtools/browser/test","directPage":true,"metadata":{"sessionId":"s1"},"cleanup":{"sessionId":"s1"}}}'
 "#,
         )
         .unwrap();
@@ -1269,7 +1269,7 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"browser":{"cd
             &plugin_path,
             r#"#!/bin/sh
 cat >/dev/null
-printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"launch":{"args":["--disable-blink-features=AutomationControlled"],"extensions":["/tmp/ext"],"initScripts":["Object.defineProperty(navigator,\"webdriver\",{get:()=>undefined});"],"userAgent":"plugin-agent"}}'
+printf '%s' '{"protocol":"web-action.plugin.v1","success":true,"launch":{"args":["--disable-blink-features=AutomationControlled"],"extensions":["/tmp/ext"],"initScripts":["Object.defineProperty(navigator,\"webdriver\",{get:()=>undefined});"],"userAgent":"plugin-agent"}}'
 "#,
         )
         .unwrap();
@@ -1312,7 +1312,7 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"launch":{"arg
 cat >/dev/null
 sleep 2
 printf done > "$1"
-printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
+printf '%s' '{"protocol":"web-action.plugin.v1","success":true,"data":{}}'
 "#,
         )
         .unwrap();

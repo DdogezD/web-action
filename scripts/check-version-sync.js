@@ -32,13 +32,13 @@ const dashboardPkg = JSON.parse(readFileSync(join(rootDir, 'packages/dashboard/p
 const dashboardVersion = dashboardPkg.version;
 
 // Read sandbox package versions
-const sandboxPkg = JSON.parse(readFileSync(join(rootDir, 'packages/@agent-browser/sandbox/package.json'), 'utf-8'));
+const sandboxPkg = JSON.parse(readFileSync(join(rootDir, 'packages/@web-action/sandbox/package.json'), 'utf-8'));
 const sandboxVersion = sandboxPkg.version;
-const sandboxVersionSource = readFileSync(join(rootDir, 'packages/@agent-browser/sandbox/src/version.ts'), 'utf-8');
+const sandboxVersionSource = readFileSync(join(rootDir, 'packages/@web-action/sandbox/src/version.ts'), 'utf-8');
 const sandboxVersionMatch = sandboxVersionSource.match(/AGENT_BROWSER_SANDBOX_VERSION\s*=\s*"([^"]*)"/);
 
 if (!sandboxVersionMatch) {
-  console.error('Could not find AGENT_BROWSER_SANDBOX_VERSION in packages/@agent-browser/sandbox/src/version.ts');
+  console.error('Could not find AGENT_BROWSER_SANDBOX_VERSION in packages/@web-action/sandbox/src/version.ts');
   process.exit(1);
 }
 
@@ -52,10 +52,10 @@ if (packageVersion !== dashboardVersion) {
   mismatches.push(`  packages/dashboard:          ${dashboardVersion}`);
 }
 if (packageVersion !== sandboxVersion) {
-  mismatches.push(`  packages/@agent-browser/sandbox/package.json: ${sandboxVersion}`);
+  mismatches.push(`  packages/@web-action/sandbox/package.json: ${sandboxVersion}`);
 }
 if (packageVersion !== sandboxRuntimeVersion) {
-  mismatches.push(`  packages/@agent-browser/sandbox/src/version.ts: ${sandboxRuntimeVersion}`);
+  mismatches.push(`  packages/@web-action/sandbox/src/version.ts: ${sandboxRuntimeVersion}`);
 }
 
 if (mismatches.length > 0) {

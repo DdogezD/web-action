@@ -1,37 +1,37 @@
 # Command Reference
 
-Complete reference for all agent-browser commands. For quick start and common patterns, see SKILL.md.
+Complete reference for all web-action commands. For quick start and common patterns, see SKILL.md.
 
 ## Navigation
 
 ```bash
-agent-browser open            # Launch browser (no navigation); stays on about:blank.
+web-action open            # Launch browser (no navigation); stays on about:blank.
                               # Pair with `network route`, `cookies set --curl`, or
                               # `addinitscript` to stage state before the first navigation.
-agent-browser open <url>      # Launch + navigate (aliases: goto, navigate)
+web-action open <url>      # Launch + navigate (aliases: goto, navigate)
                               # Supports: https://, http://, file://, about:, data://
                               # Auto-prepends https:// if no protocol given
-agent-browser read [url]      # Fetch agent-readable text, or read rendered active-tab DOM
+web-action read [url]      # Fetch agent-readable text, or read rendered active-tab DOM
                               # Explicit URLs send Accept: text/markdown, then try .md if needed
                               # Walks ancestor paths for llms.txt before HTML fallback
                               # --llms and --require-md without URL use the active tab URL
                               # --filter narrows page content to matching heading sections
                               # Honors --allowed-domains, --content-boundaries, and --max-output
                               # Options: --raw, --require-md, --outline, --llms <index|full>, --filter, --timeout <ms>
-agent-browser back            # Go back
-agent-browser forward         # Go forward
-agent-browser reload          # Reload page
-agent-browser pushstate <url> # SPA client-side navigation. Auto-detects
+web-action back            # Go back
+web-action forward         # Go forward
+web-action reload          # Reload page
+web-action pushstate <url> # SPA client-side navigation. Auto-detects
                               # window.next.router.push (triggers RSC fetch on Next.js);
                               # falls back to history.pushState + popstate/navigate events.
-agent-browser close           # Close browser (aliases: quit, exit)
-agent-browser connect 9222    # Connect to browser via CDP port
+web-action close           # Close browser (aliases: quit, exit)
+web-action connect 9222    # Connect to browser via CDP port
 ```
 
 ### Pre-navigation setup (one-turn batch)
 
 ```bash
-agent-browser batch \
+web-action batch \
   '["open"]' \
   '["network","route","*","--abort","--resource-type","script"]' \
   '["cookies","set","--curl","cookies.curl","--domain","localhost"]' \
@@ -43,35 +43,35 @@ agent-browser batch \
 ## Snapshot (page analysis)
 
 ```bash
-agent-browser snapshot            # Full accessibility tree
-agent-browser snapshot -i         # Interactive elements only (recommended)
-agent-browser snapshot -c         # Compact output
-agent-browser snapshot -d 3       # Limit depth to 3
-agent-browser snapshot -s "#main" # Scope to CSS selector
+web-action snapshot            # Full accessibility tree
+web-action snapshot -i         # Interactive elements only (recommended)
+web-action snapshot -c         # Compact output
+web-action snapshot -d 3       # Limit depth to 3
+web-action snapshot -s "#main" # Scope to CSS selector
 ```
 
 ## Interactions (use @refs from snapshot)
 
 ```bash
-agent-browser click @e1           # Click
-agent-browser click @e1 --new-tab # Click and open in new tab
-agent-browser dblclick @e1        # Double-click
-agent-browser focus @e1           # Focus element
-agent-browser fill @e2 "text"     # Clear and type
-agent-browser type @e2 "text"     # Type without clearing
-agent-browser press Enter         # Press key (alias: key)
-agent-browser press Control+a     # Key combination
-agent-browser keydown Shift       # Hold key down
-agent-browser keyup Shift         # Release key
-agent-browser hover @e1           # Hover
-agent-browser check @e1           # Check checkbox
-agent-browser uncheck @e1         # Uncheck checkbox
-agent-browser select @e1 "value"  # Select dropdown option
-agent-browser select @e1 "a" "b"  # Select multiple options
-agent-browser scroll down 500     # Scroll page (default: down 300px)
-agent-browser scrollintoview @e1  # Scroll element into view (alias: scrollinto)
-agent-browser drag @e1 @e2        # Drag and drop
-agent-browser upload @e1 file.pdf # Upload files
+web-action click @e1           # Click
+web-action click @e1 --new-tab # Click and open in new tab
+web-action dblclick @e1        # Double-click
+web-action focus @e1           # Focus element
+web-action fill @e2 "text"     # Clear and type
+web-action type @e2 "text"     # Type without clearing
+web-action press Enter         # Press key (alias: key)
+web-action press Control+a     # Key combination
+web-action keydown Shift       # Hold key down
+web-action keyup Shift         # Release key
+web-action hover @e1           # Hover
+web-action check @e1           # Check checkbox
+web-action uncheck @e1         # Uncheck checkbox
+web-action select @e1 "value"  # Select dropdown option
+web-action select @e1 "a" "b"  # Select multiple options
+web-action scroll down 500     # Scroll page (default: down 300px)
+web-action scrollintoview @e1  # Scroll element into view (alias: scrollinto)
+web-action drag @e1 @e2        # Drag and drop
+web-action upload @e1 file.pdf # Upload files
 ```
 
 Clicks fail before dispatch when another element covers the target's click point. The error names the covering element, for example `covered by <div#consent-banner>`. Dismiss or interact with that element, run a fresh snapshot, then retry the original action.
@@ -79,33 +79,33 @@ Clicks fail before dispatch when another element covers the target's click point
 ## Get Information
 
 ```bash
-agent-browser get text @e1        # Get element text
-agent-browser get html @e1        # Get innerHTML
-agent-browser get value @e1       # Get input value
-agent-browser get attr @e1 href   # Get attribute
-agent-browser get title           # Get page title
-agent-browser get url             # Get current URL
-agent-browser get cdp-url         # Get CDP WebSocket URL
-agent-browser get count ".item"   # Count matching elements
-agent-browser get box @e1         # Get bounding box
-agent-browser get styles @e1      # Get computed styles (font, color, bg, etc.)
+web-action get text @e1        # Get element text
+web-action get html @e1        # Get innerHTML
+web-action get value @e1       # Get input value
+web-action get attr @e1 href   # Get attribute
+web-action get title           # Get page title
+web-action get url             # Get current URL
+web-action get cdp-url         # Get CDP WebSocket URL
+web-action get count ".item"   # Count matching elements
+web-action get box @e1         # Get bounding box
+web-action get styles @e1      # Get computed styles (font, color, bg, etc.)
 ```
 
 ## Check State
 
 ```bash
-agent-browser is visible @e1      # Check if visible
-agent-browser is enabled @e1      # Check if enabled
-agent-browser is checked @e1      # Check if checked
+web-action is visible @e1      # Check if visible
+web-action is enabled @e1      # Check if enabled
+web-action is checked @e1      # Check if checked
 ```
 
 ## Screenshots and PDF
 
 ```bash
-agent-browser screenshot          # Save to temporary directory
-agent-browser screenshot path.png # Save to specific path
-agent-browser screenshot --full   # Full page
-agent-browser pdf output.pdf      # Save as PDF
+web-action screenshot          # Save to temporary directory
+web-action screenshot path.png # Save to specific path
+web-action screenshot --full   # Full page
+web-action pdf output.pdf      # Save as PDF
 ```
 
 Headless Chromium screenshots hide native scrollbars for consistent image output. Pass `--hide-scrollbars false` when launching to keep native scrollbars visible.
@@ -113,98 +113,98 @@ Headless Chromium screenshots hide native scrollbars for consistent image output
 ## Video Recording
 
 ```bash
-agent-browser open https://example.com     # Launch a browser session first
-agent-browser record start ./demo.webm    # Start recording
-agent-browser click @e1                   # Perform actions
-agent-browser record stop                 # Stop and save video
-agent-browser record restart ./take2.webm # Stop current + start new
+web-action open https://example.com     # Launch a browser session first
+web-action record start ./demo.webm    # Start recording
+web-action click @e1                   # Perform actions
+web-action record stop                 # Stop and save video
+web-action record restart ./take2.webm # Stop current + start new
 ```
 
 ## Wait
 
 ```bash
-agent-browser wait @e1                     # Wait for element
-agent-browser wait 2000                    # Wait milliseconds
-agent-browser wait --text "Success"        # Wait for text (or -t)
-agent-browser wait --url "**/dashboard"    # Wait for URL pattern (or -u)
-agent-browser wait --load networkidle      # Wait for network idle (or -l)
-agent-browser wait --fn "window.ready"     # Wait for JS condition (or -f)
+web-action wait @e1                     # Wait for element
+web-action wait 2000                    # Wait milliseconds
+web-action wait --text "Success"        # Wait for text (or -t)
+web-action wait --url "**/dashboard"    # Wait for URL pattern (or -u)
+web-action wait --load networkidle      # Wait for network idle (or -l)
+web-action wait --fn "window.ready"     # Wait for JS condition (or -f)
 ```
 
 ## Mouse Control
 
 ```bash
-agent-browser mouse move 100 200      # Move mouse
-agent-browser mouse down left         # Press button
-agent-browser mouse up left           # Release button
-agent-browser mouse wheel 100         # Scroll wheel
+web-action mouse move 100 200      # Move mouse
+web-action mouse down left         # Press button
+web-action mouse up left           # Release button
+web-action mouse wheel 100         # Scroll wheel
 ```
 
 ## Semantic Locators (alternative to refs)
 
 ```bash
-agent-browser find role button click --name "Submit"
-agent-browser find text "Sign In" click
-agent-browser find text "Sign In" click --exact      # Exact match only
-agent-browser find label "Email" fill "user@test.com"
-agent-browser find placeholder "Search" type "query"
-agent-browser find alt "Logo" click
-agent-browser find title "Close" click
-agent-browser find testid "submit-btn" click
-agent-browser find first ".item" click
-agent-browser find last ".item" click
-agent-browser find nth 2 "a" hover
+web-action find role button click --name "Submit"
+web-action find text "Sign In" click
+web-action find text "Sign In" click --exact      # Exact match only
+web-action find label "Email" fill "user@test.com"
+web-action find placeholder "Search" type "query"
+web-action find alt "Logo" click
+web-action find title "Close" click
+web-action find testid "submit-btn" click
+web-action find first ".item" click
+web-action find last ".item" click
+web-action find nth 2 "a" hover
 ```
 
 ## Browser Settings
 
 ```bash
-agent-browser set viewport 1920 1080          # Set viewport size
-agent-browser set viewport 1920 1080 2        # 2x retina (same CSS size, higher res screenshots)
-agent-browser set device "iPhone 14"          # Emulate device
-agent-browser set geo 37.7749 -122.4194       # Set geolocation (alias: geolocation)
-agent-browser set offline on                  # Toggle offline mode
-agent-browser set headers '{"X-Key":"v"}'     # Extra HTTP headers
-agent-browser set credentials user pass       # HTTP basic auth (alias: auth)
-agent-browser set media dark                  # Emulate color scheme
-agent-browser set media light reduced-motion  # Light mode + reduced motion
+web-action set viewport 1920 1080          # Set viewport size
+web-action set viewport 1920 1080 2        # 2x retina (same CSS size, higher res screenshots)
+web-action set device "iPhone 14"          # Emulate device
+web-action set geo 37.7749 -122.4194       # Set geolocation (alias: geolocation)
+web-action set offline on                  # Toggle offline mode
+web-action set headers '{"X-Key":"v"}'     # Extra HTTP headers
+web-action set credentials user pass       # HTTP basic auth (alias: auth)
+web-action set media dark                  # Emulate color scheme
+web-action set media light reduced-motion  # Light mode + reduced motion
 ```
 
 ## Cookies and Storage
 
 ```bash
-agent-browser cookies                     # Get all cookies
-agent-browser cookies set name value      # Set cookie
-agent-browser cookies clear               # Clear cookies
-agent-browser storage local               # Get all localStorage
-agent-browser storage local key           # Get specific key
-agent-browser storage local set k v       # Set value
-agent-browser storage local clear         # Clear all
+web-action cookies                     # Get all cookies
+web-action cookies set name value      # Set cookie
+web-action cookies clear               # Clear cookies
+web-action storage local               # Get all localStorage
+web-action storage local key           # Get specific key
+web-action storage local set k v       # Set value
+web-action storage local clear         # Clear all
 ```
 
 ## Network
 
 ```bash
-agent-browser network route <url>              # Intercept requests
-agent-browser network route <url> --abort      # Block requests
-agent-browser network route <url> --body '{}'  # Mock response
-agent-browser network unroute [url]            # Remove routes
-agent-browser network requests                 # View tracked requests
-agent-browser network requests --filter api    # Filter requests
+web-action network route <url>              # Intercept requests
+web-action network route <url> --abort      # Block requests
+web-action network route <url> --body '{}'  # Mock response
+web-action network unroute [url]            # Remove routes
+web-action network requests                 # View tracked requests
+web-action network requests --filter api    # Filter requests
 ```
 
 ## Tabs and Windows
 
 ```bash
-agent-browser tab                              # List tabs with tabId and label
-agent-browser tab new [url]                    # New tab
-agent-browser tab new --label docs [url]       # New tab with a memorable label
-agent-browser tab t2                           # Switch to tab by id
-agent-browser tab docs                         # Switch to tab by label
-agent-browser tab close                        # Close current tab
-agent-browser tab close t2                     # Close tab by id
-agent-browser tab close docs                   # Close tab by label
-agent-browser window new                       # New window
+web-action tab                              # List tabs with tabId and label
+web-action tab new [url]                    # New tab
+web-action tab new --label docs [url]       # New tab with a memorable label
+web-action tab t2                           # Switch to tab by id
+web-action tab docs                         # Switch to tab by label
+web-action tab close                        # Close current tab
+web-action tab close t2                     # Close tab by id
+web-action tab close docs                   # Close tab by label
+web-action window new                       # New window
 ```
 
 Tab ids are stable strings of the form `t1`, `t2`, `t3`. They're never reused within a session, so the same id keeps referring to the same tab across commands. Positional integers are **not** accepted — `tab 2` errors with a teaching message; use `t2`.
@@ -212,13 +212,13 @@ Tab ids are stable strings of the form `t1`, `t2`, `t3`. They're never reused wi
 User-assigned labels (`docs`, `app`, `admin`) are interchangeable with ids everywhere a tab ref is accepted. Labels are the agent-friendly way to write multi-tab workflows:
 
 ```bash
-agent-browser tab new --label docs https://docs.example.com
-agent-browser tab new --label app  https://app.example.com
-agent-browser tab docs                   # switch to docs
-agent-browser snapshot                   # populate refs for docs
-agent-browser click @e1                  # ref click on docs
-agent-browser tab app                    # switch to app
-agent-browser tab close docs             # close by label
+web-action tab new --label docs https://docs.example.com
+web-action tab new --label app  https://app.example.com
+web-action tab docs                   # switch to docs
+web-action snapshot                   # populate refs for docs
+web-action click @e1                  # ref click on docs
+web-action tab app                    # switch to app
+web-action tab close docs             # close by label
 ```
 
 Labels are never auto-generated, never rewritten on navigation, and must be unique within a session. To interact with another tab, switch to it first: the daemon maintains a single active tab, so refs (`@eN`) belong to the tab that was active when the snapshot ran.
@@ -226,9 +226,9 @@ Labels are never auto-generated, never rewritten on navigation, and must be uniq
 ## Frames
 
 ```bash
-agent-browser frame "#iframe"     # Switch to iframe by CSS selector
-agent-browser frame @e3           # Switch to iframe by element ref
-agent-browser frame main          # Back to main frame
+web-action frame "#iframe"     # Switch to iframe by CSS selector
+web-action frame @e3           # Switch to iframe by element ref
+web-action frame main          # Back to main frame
 ```
 
 ### Iframe support
@@ -236,19 +236,19 @@ agent-browser frame main          # Back to main frame
 Iframes are detected automatically during snapshots. When the main-frame snapshot runs, `Iframe` nodes are resolved and their content is inlined beneath the iframe element in the output (one level of nesting; iframes within iframes are not expanded).
 
 ```bash
-agent-browser snapshot -i
+web-action snapshot -i
 # @e3 [Iframe] "payment-frame"
 #   @e4 [input] "Card number"
 #   @e5 [button] "Pay"
 
 # Interact directly — refs inside iframes already work
-agent-browser fill @e4 "4111111111111111"
-agent-browser click @e5
+web-action fill @e4 "4111111111111111"
+web-action click @e5
 
 # Or switch frame context for scoped snapshots
-agent-browser frame @e3               # Switch using element ref
-agent-browser snapshot -i             # Snapshot scoped to that iframe
-agent-browser frame main              # Return to main frame
+web-action frame @e3               # Switch using element ref
+web-action snapshot -i             # Snapshot scoped to that iframe
+web-action frame main              # Return to main frame
 ```
 
 The `frame` command accepts:
@@ -261,27 +261,27 @@ The `frame` command accepts:
 By default, `alert` and `beforeunload` dialogs are automatically accepted so they never block the agent. `confirm` and `prompt` dialogs still require explicit handling. Use `--no-auto-dialog` to disable this behavior.
 
 ```bash
-agent-browser dialog accept [text]  # Accept dialog
-agent-browser dialog dismiss        # Dismiss dialog
-agent-browser dialog status         # Check if a dialog is currently open
+web-action dialog accept [text]  # Accept dialog
+web-action dialog dismiss        # Dismiss dialog
+web-action dialog status         # Check if a dialog is currently open
 ```
 
 ## JavaScript
 
 ```bash
-agent-browser eval "document.title"          # Simple expressions only
-agent-browser eval -b "<base64>"             # Any JavaScript (base64 encoded)
-agent-browser eval --stdin                   # Read script from stdin
+web-action eval "document.title"          # Simple expressions only
+web-action eval -b "<base64>"             # Any JavaScript (base64 encoded)
+web-action eval --stdin                   # Read script from stdin
 ```
 
 Use `-b`/`--base64` or `--stdin` for reliable execution. Shell escaping with nested quotes and special characters is error-prone.
 
 ```bash
 # Base64 encode your script, then:
-agent-browser eval -b "ZG9jdW1lbnQucXVlcnlTZWxlY3RvcignW3NyYyo9Il9uZXh0Il0nKQ=="
+web-action eval -b "ZG9jdW1lbnQucXVlcnlTZWxlY3RvcignW3NyYyo9Il9uZXh0Il0nKQ=="
 
 # Or use stdin with heredoc for multiline scripts:
-cat <<'EOF' | agent-browser eval --stdin
+cat <<'EOF' | web-action eval --stdin
 const links = document.querySelectorAll('a');
 Array.from(links).map(a => a.href);
 EOF
@@ -290,45 +290,45 @@ EOF
 ## Authentication and Plugins
 
 ```bash
-agent-browser auth save <name> --url <url> --username <user> --password-stdin
-agent-browser auth login <name>          # Login using saved credentials
-agent-browser auth login <name> --credential-provider <plugin> [--item <ref>] [--url <url>]
-agent-browser auth login <name> --username-selector <s> --password-selector <s> [--submit-selector <s>]
-agent-browser auth list                  # List saved auth profiles
-agent-browser auth show <name>           # Show profile metadata, no passwords
-agent-browser auth delete <name>         # Delete a saved profile
-agent-browser plugin add <ref>           # Add a plugin from npm or GitHub
-agent-browser plugin list                # List configured plugins
-agent-browser plugin show <name>         # Show one configured plugin
-agent-browser plugin run <name> <type> --payload <json>
+web-action auth save <name> --url <url> --username <user> --password-stdin
+web-action auth login <name>          # Login using saved credentials
+web-action auth login <name> --credential-provider <plugin> [--item <ref>] [--url <url>]
+web-action auth login <name> --username-selector <s> --password-selector <s> [--submit-selector <s>]
+web-action auth list                  # List saved auth profiles
+web-action auth show <name>           # Show profile metadata, no passwords
+web-action auth delete <name>         # Delete a saved profile
+web-action plugin add <ref>           # Add a plugin from npm or GitHub
+web-action plugin list                # List configured plugins
+web-action plugin show <name>         # Show one configured plugin
+web-action plugin run <name> <type> --payload <json>
                                           # Run an arbitrary plugin request
 ```
 
-Credential provider plugins run out-of-process over the `agent-browser.plugin.v1` stdio JSON protocol and must declare `credential.read`. Use `--confirm-actions plugin:<name>:credential.read` to require explicit approval before a plugin resolves secrets.
+Credential provider plugins run out-of-process over the `web-action.plugin.v1` stdio JSON protocol and must declare `credential.read`. Use `--confirm-actions plugin:<name>:credential.read` to require explicit approval before a plugin resolves secrets.
 
 Other capabilities use the same protocol:
-- `browser.provider`: `agent-browser --provider <name> open <url>`
+- `browser.provider`: `web-action --provider <name> open <url>`
 - `launch.mutate`: append local launch args, extensions, or init scripts
-- `command.run`: `agent-browser plugin run <name> <type> --payload <json>`
+- `command.run`: `web-action plugin run <name> <type> --payload <json>`
 
 `plugin run` is for `command.run` and custom capabilities. Core capabilities and protocol request types use their dedicated command paths.
 
 ## State Management
 
 ```bash
-agent-browser state save auth.json    # Save cookies, storage, auth state
-agent-browser state load auth.json    # Restore saved state
+web-action state save auth.json    # Save cookies, storage, auth state
+web-action state load auth.json    # Restore saved state
 ```
 
 ## MCP Server
 
 ```bash
-agent-browser mcp
-agent-browser mcp --tools all
-agent-browser mcp --tools core,network,react
+web-action mcp
+web-action mcp --tools all
+web-action mcp --tools core,network,react
 ```
 
-Starts a stdio Model Context Protocol server. MCP clients should configure the server command as `agent-browser` with args `["mcp"]`. The server defaults to MCP protocol 2025-11-25 and accepts older supported client protocol versions during initialization.
+Starts a stdio Model Context Protocol server. MCP clients should configure the server command as `web-action` with args `["mcp"]`. The server defaults to MCP protocol 2025-11-25 and accepts older supported client protocol versions during initialization.
 
 The default tools profile is `core`, which keeps MCP context small for everyday browser automation. Use `--tools all` for the full typed CLI parity surface, or combine profiles with commas, such as `--tools core,network,react`.
 
@@ -363,39 +363,39 @@ Tool calls use the same config files and environment variables as the CLI. Each 
 ## Global Options
 
 ```bash
-agent-browser --session <name> ...    # Isolated browser session
-agent-browser --json ...              # JSON output for parsing
-agent-browser --headed ...            # Show browser window (not headless)
-agent-browser --cdp <port> ...        # Connect via Chrome DevTools Protocol
-agent-browser -p <provider> ...       # Browser provider or configured provider plugin
-agent-browser --proxy <url> ...       # Use proxy server
-agent-browser --proxy-bypass <hosts>  # Hosts to bypass proxy
-agent-browser --headers <json> ...    # HTTP headers scoped to URL's origin
-agent-browser --executable-path <p>   # Custom browser executable
-agent-browser --extension <path> ...  # Load browser extension (repeatable)
-agent-browser --ignore-https-errors   # Ignore SSL certificate errors
-agent-browser --hide-scrollbars false # Keep native scrollbars visible in headless Chromium screenshots
-agent-browser --help                  # Show help (-h)
-agent-browser --version               # Show version (-V)
-agent-browser <command> --help        # Show detailed help for a command
+web-action --session <name> ...    # Isolated browser session
+web-action --json ...              # JSON output for parsing
+web-action --headed ...            # Show browser window (not headless)
+web-action --cdp <port> ...        # Connect via Chrome DevTools Protocol
+web-action -p <provider> ...       # Browser provider or configured provider plugin
+web-action --proxy <url> ...       # Use proxy server
+web-action --proxy-bypass <hosts>  # Hosts to bypass proxy
+web-action --headers <json> ...    # HTTP headers scoped to URL's origin
+web-action --executable-path <p>   # Custom browser executable
+web-action --extension <path> ...  # Load browser extension (repeatable)
+web-action --ignore-https-errors   # Ignore SSL certificate errors
+web-action --hide-scrollbars false # Keep native scrollbars visible in headless Chromium screenshots
+web-action --help                  # Show help (-h)
+web-action --version               # Show version (-V)
+web-action <command> --help        # Show detailed help for a command
 ```
 
 ## Debugging
 
 ```bash
-agent-browser --headed open example.com   # Show browser window
-agent-browser --cdp 9222 snapshot         # Connect via CDP port
-agent-browser connect 9222                # Alternative: connect command
-agent-browser console                     # View console messages
-agent-browser console --clear             # Clear console
-agent-browser errors                      # View page errors
-agent-browser errors --clear              # Clear errors
-agent-browser highlight @e1               # Highlight element
-agent-browser inspect                     # Open Chrome DevTools for this session
-agent-browser trace start                 # Start recording trace
-agent-browser trace stop trace.json       # Stop and save trace
-agent-browser profiler start              # Start Chrome DevTools profiling
-agent-browser profiler stop trace.json    # Stop and save profile
+web-action --headed open example.com   # Show browser window
+web-action --cdp 9222 snapshot         # Connect via CDP port
+web-action connect 9222                # Alternative: connect command
+web-action console                     # View console messages
+web-action console --clear             # Clear console
+web-action errors                      # View page errors
+web-action errors --clear              # Clear errors
+web-action highlight @e1               # Highlight element
+web-action inspect                     # Open Chrome DevTools for this session
+web-action trace start                 # Start recording trace
+web-action trace stop trace.json       # Stop and save trace
+web-action profiler start              # Start Chrome DevTools profiling
+web-action profiler stop trace.json    # Stop and save profile
 ```
 
 ## React / Web Vitals
@@ -403,15 +403,15 @@ agent-browser profiler stop trace.json    # Stop and save profile
 Requires `--enable react-devtools` at launch for the `react ...` commands. `vitals` and `pushstate` are framework-agnostic.
 
 ```bash
-agent-browser open --enable react-devtools <url>    # Launch with React hook installed
-agent-browser react tree                            # Full component tree
-agent-browser react inspect <fiberId>               # Props, hooks, state, source
-agent-browser react renders start                   # Begin re-render recording
-agent-browser react renders stop [--json]           # Stop and print render profile
-agent-browser react suspense [--only-dynamic] [--json]  # Suspense boundaries + classifier
+web-action open --enable react-devtools <url>    # Launch with React hook installed
+web-action react tree                            # Full component tree
+web-action react inspect <fiberId>               # Props, hooks, state, source
+web-action react renders start                   # Begin re-render recording
+web-action react renders stop [--json]           # Stop and print render profile
+web-action react suspense [--only-dynamic] [--json]  # Suspense boundaries + classifier
                                                          # --only-dynamic hides the "static" list
-agent-browser vitals [url] [--json]                 # LCP/CLS/TTFB/FCP/INP + hydration
-agent-browser pushstate <url>                       # SPA client-side nav (auto-detects Next router)
+web-action vitals [url] [--json]                 # LCP/CLS/TTFB/FCP/INP + hydration
+web-action pushstate <url>                       # SPA client-side nav (auto-detects Next router)
 ```
 
 `vitals` prints a summary by default and uses the same fields as the structured `--json` response.
@@ -419,16 +419,16 @@ agent-browser pushstate <url>                       # SPA client-side nav (auto-
 ## Init scripts
 
 ```bash
-agent-browser open --init-script <path>             # Register before first navigation (repeatable)
-agent-browser addinitscript <js>                    # Register at runtime (returns identifier)
-agent-browser removeinitscript <identifier>         # Remove a previously registered init script
+web-action open --init-script <path>             # Register before first navigation (repeatable)
+web-action addinitscript <js>                    # Register at runtime (returns identifier)
+web-action removeinitscript <identifier>         # Remove a previously registered init script
 ```
 
 ## cURL cookie import
 
 ```bash
-agent-browser cookies set --curl <file>                             # Auto-detects JSON/cURL/Cookie-header
-agent-browser cookies set --curl <file> --domain example.com        # Scope to a domain
+web-action cookies set --curl <file>                             # Auto-detects JSON/cURL/Cookie-header
+web-action cookies set --curl <file> --domain example.com        # Scope to a domain
 ```
 
 Supported formats: JSON array of `{name, value}`, a cURL dump from DevTools -> Network -> Copy as cURL, or a bare Cookie header. Errors never echo cookie values.
@@ -436,8 +436,8 @@ Supported formats: JSON array of `{name, value}`, a cURL dump from DevTools -> N
 ## Network route by resource type
 
 ```bash
-agent-browser network route '*' --abort --resource-type script       # Block scripts only (SSR-lock pattern)
-agent-browser network route '*' --resource-type image,font --body '' # Stub images and fonts
+web-action network route '*' --abort --resource-type script       # Block scripts only (SSR-lock pattern)
+web-action network route '*' --resource-type image,font --body '' # Stub images and fonts
 ```
 
 ## Environment Variables
@@ -451,7 +451,7 @@ AGENT_BROWSER_ENABLE="react-devtools"        # Comma-separated built-in init scr
 AGENT_BROWSER_HIDE_SCROLLBARS="false"        # Keep native scrollbars visible in headless Chromium screenshots
 AGENT_BROWSER_PROVIDER="browserbase"         # Browser provider or configured provider plugin
 AGENT_BROWSER_STREAM_PORT="9223"             # Override WebSocket streaming port (default: OS-assigned)
-AGENT_BROWSER_CONFIG="./agent-browser.json"  # Custom config file
+AGENT_BROWSER_CONFIG="./web-action.json"  # Custom config file
 AGENT_BROWSER_CDP="9222"                     # Connect daemon to CDP port or WebSocket URL
-AGENT_BROWSER_PLUGINS='[{"name":"vault","command":"agent-browser-plugin-vault","capabilities":["credential.read"]},{"name":"stealth","command":"agent-browser-plugin-stealth","capabilities":["launch.mutate"]}]'
+AGENT_BROWSER_PLUGINS='[{"name":"vault","command":"web-action-plugin-vault","capabilities":["credential.read"]},{"name":"stealth","command":"web-action-plugin-stealth","capabilities":["launch.mutate"]}]'
 ```

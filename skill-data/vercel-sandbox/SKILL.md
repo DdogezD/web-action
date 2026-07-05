@@ -1,19 +1,19 @@
 ---
 name: vercel-sandbox
-description: Run agent-browser + Chrome inside Vercel Sandbox microVMs for browser automation from any Vercel-deployed app. Use when the user needs browser automation in a Vercel app (Next.js, SvelteKit, Nuxt, Remix, Astro, etc.), wants to run headless Chrome without binary size limits, needs persistent browser sessions across commands, or wants ephemeral isolated browser environments. Triggers include "Vercel Sandbox browser", "microVM Chrome", "agent-browser in sandbox", "browser automation on Vercel", or any task requiring Chrome in a Vercel Sandbox.
+description: Run web-action + Chrome inside Vercel Sandbox microVMs for browser automation from any Vercel-deployed app. Use when the user needs browser automation in a Vercel app (Next.js, SvelteKit, Nuxt, Remix, Astro, etc.), wants to run headless Chrome without binary size limits, needs persistent browser sessions across commands, or wants ephemeral isolated browser environments. Triggers include "Vercel Sandbox browser", "microVM Chrome", "web-action in sandbox", "browser automation on Vercel", or any task requiring Chrome in a Vercel Sandbox.
 ---
 
 # Browser Automation with Vercel Sandbox
 
-Run agent-browser + headless Chrome inside ephemeral Vercel Sandbox microVMs. A Linux VM spins up on demand, executes browser commands, and shuts down. Works with any Vercel-deployed framework (Next.js, SvelteKit, Nuxt, Remix, Astro, etc.).
+Run web-action + headless Chrome inside ephemeral Vercel Sandbox microVMs. A Linux VM spins up on demand, executes browser commands, and shuts down. Works with any Vercel-deployed framework (Next.js, SvelteKit, Nuxt, Remix, Astro, etc.).
 
 ## Dependencies
 
 ```bash
-pnpm add @agent-browser/sandbox @vercel/sandbox
+pnpm add @web-action/sandbox @vercel/sandbox
 ```
 
-The sandbox VM needs system dependencies for Chromium plus agent-browser itself. The `@agent-browser/sandbox` helpers install them by default for fresh sandboxes and use sandbox snapshots (below) for sub-second startup. Pass `installSystemDependencies: false` only when the sandbox image already provides Chromium's required libraries.
+The sandbox VM needs system dependencies for Chromium plus web-action itself. The `@web-action/sandbox` helpers install them by default for fresh sandboxes and use sandbox snapshots (below) for sub-second startup. Pass `installSystemDependencies: false` only when the sandbox image already provides Chromium's required libraries.
 
 ## Core Pattern
 
@@ -23,7 +23,7 @@ import {
   runAgentBrowserCommand,
   withAgentBrowserSandbox,
   type VercelSandboxSession,
-} from "@agent-browser/sandbox/vercel";
+} from "@web-action/sandbox/vercel";
 
 async function withBrowser<T>(
   fn: (sandbox: VercelSandboxSession) => Promise<T>,
@@ -123,15 +123,15 @@ export async function fillAndSubmitForm(url: string, data: Record<string, string
 
 ## Sandbox Snapshots (Fast Startup)
 
-A **sandbox snapshot** is a saved VM image of a Vercel Sandbox with system dependencies + agent-browser + Chromium already installed. Think of it like a Docker image: instead of installing dependencies from scratch every time, the sandbox boots from the pre-built image.
+A **sandbox snapshot** is a saved VM image of a Vercel Sandbox with system dependencies + web-action + Chromium already installed. Think of it like a Docker image: instead of installing dependencies from scratch every time, the sandbox boots from the pre-built image.
 
-This is unrelated to agent-browser's *accessibility snapshot* feature (`agent-browser snapshot`), which dumps a page's accessibility tree. A sandbox snapshot is a Vercel infrastructure concept for fast VM startup.
+This is unrelated to web-action's *accessibility snapshot* feature (`web-action snapshot`), which dumps a page's accessibility tree. A sandbox snapshot is a Vercel infrastructure concept for fast VM startup.
 
-Without a sandbox snapshot, each run installs system deps + agent-browser + Chromium (~30s). With one, startup is sub-second.
+Without a sandbox snapshot, each run installs system deps + web-action + Chromium (~30s). With one, startup is sub-second.
 
 ### Creating a sandbox snapshot
 
-The snapshot must include system dependencies (via `dnf`), agent-browser, and Chromium:
+The snapshot must include system dependencies (via `dnf`), web-action, and Chromium:
 
 ```ts
 const snapshotId = await createAgentBrowserSnapshot();
@@ -171,9 +171,9 @@ Combine with Vercel Cron Jobs for recurring browser tasks:
 // app/api/cron/route.ts  (or equivalent in your framework)
 export async function GET() {
   const result = await withBrowser(async (sandbox) => {
-    await sandbox.runCommand("agent-browser", ["open", "https://example.com/pricing"]);
-    const snap = await sandbox.runCommand("agent-browser", ["snapshot", "-i", "-c"]);
-    await sandbox.runCommand("agent-browser", ["close"]);
+    await sandbox.runCommand("web-action", ["open", "https://example.com/pricing"]);
+    const snap = await sandbox.runCommand("web-action", ["snapshot", "-i", "-c"]);
+    await sandbox.runCommand("web-action", ["close"]);
     return await snap.stdout();
   });
 
@@ -210,4 +210,4 @@ The pattern works identically across frameworks. The only difference is where yo
 
 ## Example
 
-See `examples/environments/` in the agent-browser repo for a working app with the Vercel Sandbox pattern, including a sandbox snapshot creation script, streaming progress UI, and rate limiting.
+See `examples/environments/` in the web-action repo for a working app with the Vercel Sandbox pattern, including a sandbox snapshot creation script, streaming progress UI, and rate limiting.

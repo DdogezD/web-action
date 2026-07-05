@@ -56,23 +56,23 @@ if (dashboardPkg.version !== version) {
   console.log(`  packages/dashboard/package.json already up to date`);
 }
 
-// Update packages/@agent-browser/sandbox/package.json
-const sandboxPkgPath = join(rootDir, "packages", "@agent-browser", "sandbox", "package.json");
+// Update packages/@web-action/sandbox/package.json
+const sandboxPkgPath = join(rootDir, "packages", "@web-action", "sandbox", "package.json");
 const sandboxPkg = JSON.parse(readFileSync(sandboxPkgPath, "utf-8"));
 if (sandboxPkg.version !== version) {
   const oldVersion = sandboxPkg.version;
   sandboxPkg.version = version;
   writeFileSync(sandboxPkgPath, JSON.stringify(sandboxPkg, null, 2) + "\n");
-  console.log(`  Updated packages/@agent-browser/sandbox/package.json: ${oldVersion} -> ${version}`);
+  console.log(`  Updated packages/@web-action/sandbox/package.json: ${oldVersion} -> ${version}`);
 } else {
-  console.log(`  packages/@agent-browser/sandbox/package.json already up to date`);
+  console.log(`  packages/@web-action/sandbox/package.json already up to date`);
 }
 
 // Update package runtime version constant
 const sandboxVersionPath = join(
   rootDir,
   "packages",
-  "@agent-browser",
+  "@web-action",
   "sandbox",
   "src",
   "version.ts",
@@ -81,15 +81,15 @@ const sandboxVersionSource = `export const AGENT_BROWSER_SANDBOX_VERSION = "${ve
 const currentSandboxVersionSource = readFileSync(sandboxVersionPath, "utf-8");
 if (currentSandboxVersionSource !== sandboxVersionSource) {
   writeFileSync(sandboxVersionPath, sandboxVersionSource);
-  console.log(`  Updated packages/@agent-browser/sandbox/src/version.ts -> ${version}`);
+  console.log(`  Updated packages/@web-action/sandbox/src/version.ts -> ${version}`);
 } else {
-  console.log(`  packages/@agent-browser/sandbox/src/version.ts already up to date`);
+  console.log(`  packages/@web-action/sandbox/src/version.ts already up to date`);
 }
 
 // Update Cargo.lock to match Cargo.toml
 if (cargoTomlUpdated) {
   try {
-    execSync("cargo update -p agent-browser --offline", {
+    execSync("cargo update -p web-action --offline", {
       cwd: cliDir,
       stdio: "pipe",
     });
@@ -97,7 +97,7 @@ if (cargoTomlUpdated) {
   } catch {
     // --offline may fail if package not in cache, try without it
     try {
-      execSync("cargo update -p agent-browser", {
+      execSync("cargo update -p web-action", {
         cwd: cliDir,
         stdio: "pipe",
       });

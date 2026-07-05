@@ -17,32 +17,32 @@ Capture browser automation as video for debugging, documentation, or verificatio
 
 ```bash
 # Launch the browser, then start recording
-agent-browser open https://example.com
-agent-browser record start ./demo.webm
+web-action open https://example.com
+web-action record start ./demo.webm
 
 # Perform actions
-agent-browser snapshot -i
-agent-browser click @e1
-agent-browser fill @e2 "test input"
+web-action snapshot -i
+web-action click @e1
+web-action fill @e2 "test input"
 
 # Stop and save
-agent-browser record stop
+web-action record stop
 ```
 
 ## Recording Commands
 
 ```bash
 # Launch a session first
-agent-browser open
+web-action open
 
 # Start recording to file
-agent-browser record start ./output.webm
+web-action record start ./output.webm
 
 # Stop current recording
-agent-browser record stop
+web-action record stop
 
 # Restart with new file (stops current + starts new)
-agent-browser record restart ./take2.webm
+web-action record restart ./take2.webm
 ```
 
 ## Use Cases
@@ -54,16 +54,16 @@ agent-browser record restart ./take2.webm
 # Record automation for debugging
 
 # Run your automation
-agent-browser open https://app.example.com
-agent-browser record start ./debug-$(date +%Y%m%d-%H%M%S).webm
-agent-browser snapshot -i
-agent-browser click @e1 || {
+web-action open https://app.example.com
+web-action record start ./debug-$(date +%Y%m%d-%H%M%S).webm
+web-action snapshot -i
+web-action click @e1 || {
     echo "Click failed - check recording"
-    agent-browser record stop
+    web-action record stop
     exit 1
 }
 
-agent-browser record stop
+web-action record stop
 ```
 
 ### Documentation Generation
@@ -72,22 +72,22 @@ agent-browser record stop
 #!/bin/bash
 # Record workflow for documentation
 
-agent-browser open https://app.example.com/login
-agent-browser record start ./docs/how-to-login.webm
-agent-browser wait 1000  # Pause for visibility
+web-action open https://app.example.com/login
+web-action record start ./docs/how-to-login.webm
+web-action wait 1000  # Pause for visibility
 
-agent-browser snapshot -i
-agent-browser fill @e1 "demo@example.com"
-agent-browser wait 500
+web-action snapshot -i
+web-action fill @e1 "demo@example.com"
+web-action wait 500
 
-agent-browser fill @e2 "password"
-agent-browser wait 500
+web-action fill @e2 "password"
+web-action wait 500
 
-agent-browser click @e3
-agent-browser wait --load networkidle
-agent-browser wait 1000  # Show result
+web-action click @e3
+web-action wait --load networkidle
+web-action wait 1000  # Show result
 
-agent-browser record stop
+web-action record stop
 ```
 
 ### CI/CD Test Evidence
@@ -100,8 +100,8 @@ TEST_NAME="${1:-e2e-test}"
 RECORDING_DIR="./test-recordings"
 mkdir -p "$RECORDING_DIR"
 
-agent-browser open
-agent-browser record start "$RECORDING_DIR/$TEST_NAME-$(date +%s).webm"
+web-action open
+web-action record start "$RECORDING_DIR/$TEST_NAME-$(date +%s).webm"
 
 # Run test
 if run_e2e_test; then
@@ -110,7 +110,7 @@ else
     echo "Test failed - recording saved"
 fi
 
-agent-browser record stop
+web-action record stop
 ```
 
 ## Best Practices
@@ -119,16 +119,16 @@ agent-browser record stop
 
 ```bash
 # Slow down for human viewing
-agent-browser click @e1
-agent-browser wait 500  # Let viewer see result
+web-action click @e1
+web-action wait 500  # Let viewer see result
 ```
 
 ### 2. Use Descriptive Filenames
 
 ```bash
 # Include context in filename
-agent-browser record start ./recordings/login-flow-2024-01-15.webm
-agent-browser record start ./recordings/checkout-test-run-42.webm
+web-action record start ./recordings/login-flow-2024-01-15.webm
+web-action record start ./recordings/checkout-test-run-42.webm
 ```
 
 ### 3. Handle Recording in Error Cases
@@ -138,13 +138,13 @@ agent-browser record start ./recordings/checkout-test-run-42.webm
 set -e
 
 cleanup() {
-    agent-browser record stop 2>/dev/null || true
-    agent-browser close 2>/dev/null || true
+    web-action record stop 2>/dev/null || true
+    web-action close 2>/dev/null || true
 }
 trap cleanup EXIT
 
-agent-browser open
-agent-browser record start ./automation.webm
+web-action open
+web-action record start ./automation.webm
 # ... automation steps ...
 ```
 
@@ -152,14 +152,14 @@ agent-browser record start ./automation.webm
 
 ```bash
 # Record video AND capture key frames
-agent-browser open https://example.com
-agent-browser record start ./flow.webm
-agent-browser screenshot ./screenshots/step1-homepage.png
+web-action open https://example.com
+web-action record start ./flow.webm
+web-action screenshot ./screenshots/step1-homepage.png
 
-agent-browser click @e1
-agent-browser screenshot ./screenshots/step2-after-click.png
+web-action click @e1
+web-action screenshot ./screenshots/step2-after-click.png
 
-agent-browser record stop
+web-action record stop
 ```
 
 ## Output Format

@@ -143,7 +143,7 @@ mod tests {
         };
         assert!(which_exists(probe));
         assert!(!which_exists(
-            "agent-browser-this-does-not-exist-please-dont-install-it"
+            "web-action-this-does-not-exist-please-dont-install-it"
         ));
     }
 

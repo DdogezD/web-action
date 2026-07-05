@@ -200,19 +200,19 @@ pub async fn connect_plugin_provider_with_plugins_and_options(
     let mut plugin_launch_options = serde_json::Map::new();
     plugin_launch_options.insert(
         "headed".to_string(),
-        json!(env_var_is_truthy("AGENT_BROWSER_HEADED")),
+        json!(env_var_is_truthy("WEB_ACTION_HEADED")),
     );
     plugin_launch_options.insert(
         "engine".to_string(),
-        json!(env::var("AGENT_BROWSER_ENGINE").unwrap_or_else(|_| "chrome".to_string())),
+        json!(env::var("WEB_ACTION_ENGINE").unwrap_or_else(|_| "chrome".to_string())),
     );
     plugin_launch_options.insert(
         "userAgent".to_string(),
-        json!(env::var("AGENT_BROWSER_USER_AGENT").ok()),
+        json!(env::var("WEB_ACTION_USER_AGENT").ok()),
     );
     plugin_launch_options.insert(
         "colorScheme".to_string(),
-        json!(env::var("AGENT_BROWSER_COLOR_SCHEME").ok()),
+        json!(env::var("WEB_ACTION_COLOR_SCHEME").ok()),
     );
 
     if let Some(Value::Object(command_options)) = launch_options {
@@ -223,7 +223,7 @@ pub async fn connect_plugin_provider_with_plugins_and_options(
 
     let request = json!({
         "provider": provider_name,
-        "session": env::var("AGENT_BROWSER_SESSION").unwrap_or_else(|_| "default".to_string()),
+        "session": env::var("WEB_ACTION_SESSION").unwrap_or_else(|_| "default".to_string()),
         "launchOptions": Value::Object(plugin_launch_options),
     });
     let browser =
@@ -542,7 +542,7 @@ mod agentcore {
         let url = format!("https://{}{}", host, path);
 
         // Generate a unique session name
-        let session_name = format!("agent-browser-{}", &uuid::Uuid::new_v4().to_string()[..8]);
+        let session_name = format!("web-action-{}", &uuid::Uuid::new_v4().to_string()[..8]);
 
         let mut body_json = json!({
             "name": session_name,
@@ -871,8 +871,8 @@ mod tests {
 
     #[test]
     fn test_connect_provider_unknown() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_PLUGINS"]);
-        guard.remove("AGENT_BROWSER_PLUGINS");
+        let guard = EnvGuard::new(&["WEB_ACTION_PLUGINS"]);
+        guard.remove("WEB_ACTION_PLUGINS");
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(connect_provider("unknown-provider"));
@@ -882,9 +882,9 @@ mod tests {
 
     #[test]
     fn test_connect_provider_with_supplied_registry_does_not_fallback_to_env_plugins() {
-        let guard = EnvGuard::new(&["AGENT_BROWSER_PLUGINS"]);
+        let guard = EnvGuard::new(&["WEB_ACTION_PLUGINS"]);
         guard.set(
-            "AGENT_BROWSER_PLUGINS",
+            "WEB_ACTION_PLUGINS",
             r#"[{"name":"env-cloud","command":"should-not-run","capabilities":["browser.provider"]}]"#,
         );
 
@@ -963,7 +963,7 @@ mod tests {
             &plugin_path,
             r#"#!/bin/sh
 cat > "$1"
-printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
+printf '%s' '{"protocol":"web-action.plugin.v1","success":true,"data":{}}'
 "#,
         )
         .unwrap();
@@ -996,13 +996,13 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
         use std::os::unix::fs::PermissionsExt;
 
         let guard = EnvGuard::new(&[
-            "AGENT_BROWSER_HEADED",
-            "AGENT_BROWSER_ENGINE",
-            "AGENT_BROWSER_SESSION",
+            "WEB_ACTION_HEADED",
+            "WEB_ACTION_ENGINE",
+            "WEB_ACTION_SESSION",
         ]);
-        guard.set("AGENT_BROWSER_HEADED", "false");
-        guard.set("AGENT_BROWSER_ENGINE", "chrome");
-        guard.set("AGENT_BROWSER_SESSION", "provider-test");
+        guard.set("WEB_ACTION_HEADED", "false");
+        guard.set("WEB_ACTION_ENGINE", "chrome");
+        guard.set("WEB_ACTION_SESSION", "provider-test");
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let dir = tempfile::tempdir().unwrap();
@@ -1012,7 +1012,7 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
             &plugin_path,
             r#"#!/bin/sh
 cat > "$1"
-printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"browser":{"cdpUrl":"ws://127.0.0.1:9222/devtools/browser/test"}}'
+printf '%s' '{"protocol":"web-action.plugin.v1","success":true,"browser":{"cdpUrl":"ws://127.0.0.1:9222/devtools/browser/test"}}'
 "#,
         )
         .unwrap();
@@ -1042,17 +1042,17 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"browser":{"cd
         use std::os::unix::fs::PermissionsExt;
 
         let guard = EnvGuard::new(&[
-            "AGENT_BROWSER_COLOR_SCHEME",
-            "AGENT_BROWSER_ENGINE",
-            "AGENT_BROWSER_HEADED",
-            "AGENT_BROWSER_SESSION",
-            "AGENT_BROWSER_USER_AGENT",
+            "WEB_ACTION_COLOR_SCHEME",
+            "WEB_ACTION_ENGINE",
+            "WEB_ACTION_HEADED",
+            "WEB_ACTION_SESSION",
+            "WEB_ACTION_USER_AGENT",
         ]);
-        guard.set("AGENT_BROWSER_COLOR_SCHEME", "light");
-        guard.set("AGENT_BROWSER_ENGINE", "chrome");
-        guard.set("AGENT_BROWSER_HEADED", "false");
-        guard.set("AGENT_BROWSER_SESSION", "provider-test");
-        guard.set("AGENT_BROWSER_USER_AGENT", "env-agent");
+        guard.set("WEB_ACTION_COLOR_SCHEME", "light");
+        guard.set("WEB_ACTION_ENGINE", "chrome");
+        guard.set("WEB_ACTION_HEADED", "false");
+        guard.set("WEB_ACTION_SESSION", "provider-test");
+        guard.set("WEB_ACTION_USER_AGENT", "env-agent");
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let dir = tempfile::tempdir().unwrap();
@@ -1062,7 +1062,7 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"browser":{"cd
             &plugin_path,
             r#"#!/bin/sh
 cat > "$1"
-printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"browser":{"cdpUrl":"ws://127.0.0.1:9222/devtools/browser/test"}}'
+printf '%s' '{"protocol":"web-action.plugin.v1","success":true,"browser":{"cdpUrl":"ws://127.0.0.1:9222/devtools/browser/test"}}'
 "#,
         )
         .unwrap();

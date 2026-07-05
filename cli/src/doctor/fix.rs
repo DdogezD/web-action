@@ -99,7 +99,7 @@ fn close_all_sessions() -> usize {
 
 fn purge_old_state() -> usize {
     let dir = get_sessions_dir();
-    let expire_days = env::var("AGENT_BROWSER_STATE_EXPIRE_DAYS")
+    let expire_days = env::var("WEB_ACTION_STATE_EXPIRE_DAYS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(30);
@@ -221,7 +221,7 @@ mod tests {
             Status::Info,
             "No encryption key set",
         )
-        .with_fix("export AGENT_BROWSER_ENCRYPTION_KEY=...")];
+        .with_fix("export WEB_ACTION_ENCRYPTION_KEY=...")];
         let mut fixed = Vec::new();
 
         run(&mut checks, &mut fixed);
@@ -240,8 +240,8 @@ mod tests {
             "fixed summary should mention the key generation"
         );
         assert!(
-            tmp.path().join(".agent-browser/.encryption-key").exists(),
-            "key file should exist at ~/.agent-browser/.encryption-key"
+            tmp.path().join(".web-action/.encryption-key").exists(),
+            "key file should exist at ~/.web-action/.encryption-key"
         );
     }
 }

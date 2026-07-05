@@ -146,22 +146,28 @@ struct ChromeArgs {
     temp_user_data_dir: Option<PathBuf>,
 }
 
+/// Default persistent profile directory.
+fn default_profile_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".web-action")
+        .join("profiles")
+        .join("main")
+}
+
 fn build_chrome_args(options: &LaunchOptions) -> Result<ChromeArgs, String> {
+    // Minimal flags that don't signal automation.
+    // Based on Patchright research: many Playwright-default flags are bot
+    // detection vectors (e.g. --disable-component-update, --metrics-recording-only,
+    // --enable-unsafe-swiftshader). We only include flags a normal Chrome
+    // process might reasonably use.
     let mut args = vec![
         "--remote-debugging-port=0".to_string(),
         "--no-first-run".to_string(),
         "--no-default-browser-check".to_string(),
-        "--disable-background-networking".to_string(),
-        "--disable-backgrounding-occluded-windows".to_string(),
-        "--disable-component-update".to_string(),
-        "--disable-default-apps".to_string(),
-        "--disable-hang-monitor".to_string(),
-        "--disable-popup-blocking".to_string(),
-        "--disable-prompt-on-repost".to_string(),
         "--disable-sync".to_string(),
-        "--disable-features=Translate".to_string(),
-        "--enable-features=NetworkService,NetworkServiceInProcess".to_string(),
-        "--metrics-recording-only".to_string(),
+        "--disable-features=Translate,OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction,OptimizationHints".to_string(),
+        "--disable-blink-features=AutomationControlled".to_string(),
     ];
 
     if !options.use_real_keychain {
@@ -180,16 +186,18 @@ fn build_chrome_args(options: &LaunchOptions) -> Result<ChromeArgs, String> {
         args.push("--headless=new".to_string());
         // Linux paints native scrollbars into viewport screenshots unless
         // Chrome is launched with this flag. `--hide-scrollbars` is
-        // presence-based, so agent-browser exposes --hide-scrollbars false
+        // presence-based, so web-action exposes --hide-scrollbars false
         // as the public opt-out instead of forwarding a fake inverse switch.
         if options.hide_scrollbars {
             args.push("--hide-scrollbars".to_string());
         }
-        // Enable SwiftShader software rendering in headless mode.  This
-        // prevents silent crashes in environments where GPU drivers are
-        // missing or restricted (VMs, containers, some cloud machines)
-        // while preserving WebGL support.  Playwright uses the same flag.
-        args.push("--enable-unsafe-swiftshader".to_string());
+        // NOTE: Intentionally NOT adding --enable-unsafe-swiftshader.
+        // SwiftShader is a software GPU renderer used almost exclusively by
+        // bots and headless automation tools. Its presence is a detection
+        // vector. Modern headless Chrome uses Skia/Graphite for rendering
+        // without SwiftShader. If GPU drivers are missing, Chrome falls
+        // back to a CPU rasterizer that does not carry the SwiftShader
+        // detection risk.
     }
 
     if let Some(ref proxy) = options.proxy {
@@ -206,12 +214,14 @@ fn build_chrome_args(options: &LaunchOptions) -> Result<ChromeArgs, String> {
         args.push(format!("--user-data-dir={}", expanded));
         (dir, None)
     } else {
-        let dir =
-            std::env::temp_dir().join(format!("agent-browser-chrome-{}", uuid::Uuid::new_v4()));
+        // Use persistent profile by default so cookies, localStorage, and
+        // session data survive browser restarts.
+        let dir = default_profile_dir();
         std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("Failed to create temp profile dir: {}", e))?;
+            .map_err(|e| format!("Failed to create profile dir {}: {}", dir.display(), e))?;
         args.push(format!("--user-data-dir={}", dir.display()));
-        (dir.clone(), Some(dir))
+        // Persistent profile: no temp cleanup on Drop.
+        (dir, None)
     };
 
     if options.ignore_https_errors {
@@ -265,11 +275,11 @@ pub fn launch_chrome(options: &LaunchOptions) -> Result<ChromeProcess, String> {
             let cache_dir = crate::install::get_browsers_dir();
             format!(
                 "Chrome not found. Checked:\n  \
-                 - agent-browser cache: {}\n  \
+                 - web-action cache: {}\n  \
                  - System Chrome installations\n  \
                  - Puppeteer browser cache\n  \
                  - Playwright browser cache\n\
-                 Run `agent-browser install` to download Chrome, or use --executable-path.",
+                 Run `web-action install` to download Chrome, or use --executable-path.",
                 cache_dir.display()
             )
         })?,
@@ -319,8 +329,14 @@ pub fn launch_chrome(options: &LaunchOptions) -> Result<ChromeProcess, String> {
             Err(e) => {
                 last_err = e;
                 if attempt < max_attempts {
-                    // Use write! instead of eprintln! to avoid panicking
-                    // if the daemon's stderr pipe is broken (parent dropped it).
+                    // Clean up SingletonLock from a previous crashed Chrome
+                    // so the retry can use the same persistent profile.
+                    let singleton_lock = effective_options
+                        .profile
+                        .as_ref()
+                        .map(|p| PathBuf::from(expand_tilde(p)).join("SingletonLock"))
+                        .unwrap_or_else(|| default_profile_dir().join("SingletonLock"));
+                    let _ = std::fs::remove_file(&singleton_lock);
                     let _ = writeln!(
                         std::io::stderr(),
                         "[chrome] Launch attempt {}/{} failed, retrying in 500ms...",
@@ -555,7 +571,7 @@ fn chrome_launch_error(message: &str, stderr_lines: &[String]) -> String {
 }
 
 pub fn find_chrome() -> Option<PathBuf> {
-    // 1. Check Chrome downloaded by `agent-browser install`
+    // 1. Check Chrome downloaded by `web-action install`
     if let Some(p) = crate::install::find_installed_chrome() {
         return Some(p);
     }
@@ -567,7 +583,7 @@ pub fn find_chrome() -> Option<PathBuf> {
         let _ = writeln!(
             std::io::stderr(),
             "Warning: Chrome cache directory exists ({}) but no Chrome binary found inside. \
-             Falling back to system Chrome. Run `agent-browser install` to re-download.",
+             Falling back to system Chrome. Run `web-action install` to re-download.",
             cache_dir.display()
         );
     }
@@ -592,10 +608,10 @@ pub fn find_chrome() -> Option<PathBuf> {
     #[cfg(target_os = "linux")]
     {
         let candidates = [
-            "google-chrome",
-            "google-chrome-stable",
             "chromium-browser",
             "chromium",
+            "google-chrome",
+            "google-chrome-stable",
             "brave-browser",
             "brave-browser-stable",
         ];
@@ -940,7 +956,7 @@ pub fn copy_chrome_profile(
     profile_directory: &str,
 ) -> Result<PathBuf, String> {
     let temp_dir =
-        std::env::temp_dir().join(format!("agent-browser-profile-{}", uuid::Uuid::new_v4()));
+        std::env::temp_dir().join(format!("web-action-profile-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir)
         .map_err(|e| format!("Failed to create temp profile dir: {}", e))?;
 
@@ -1343,7 +1359,7 @@ mod tests {
         guard.set("PLAYWRIGHT_BROWSERS_PATH", "/nonexistent/path");
 
         let temp_home = std::env::temp_dir().join(format!(
-            "agent-browser-test-home-{}-{}",
+            "web-action-test-home-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1368,16 +1384,14 @@ mod tests {
         let result = build_chrome_args(&opts).unwrap();
         assert!(result.args.iter().any(|a| a == "--headless=new"));
         assert!(result.args.iter().any(|a| a == "--hide-scrollbars"));
-        assert!(result
+        // SwiftShader intentionally removed (bot detection vector)
+        assert!(!result
             .args
             .iter()
             .any(|a| a == "--enable-unsafe-swiftshader"));
         assert!(result.args.iter().any(|a| a == "--window-size=1280,720"));
-        // Temp dir created when no profile
-        assert!(result.temp_user_data_dir.is_some());
-        let dir = result.temp_user_data_dir.unwrap();
-        assert!(dir.exists());
-        let _ = std::fs::remove_dir_all(&dir);
+        // Default profile is persistent (no temp dir cleanup)
+        assert!(result.temp_user_data_dir.is_none());
     }
 
     #[test]
@@ -1389,29 +1403,23 @@ mod tests {
         let result = build_chrome_args(&opts).unwrap();
         assert!(!result.args.iter().any(|a| a.contains("--headless")));
         assert!(!result.args.iter().any(|a| a == "--hide-scrollbars"));
-        assert!(!result
-            .args
-            .iter()
-            .any(|a| a == "--enable-unsafe-swiftshader"));
         assert!(!result.args.iter().any(|a| a.starts_with("--window-size=")));
-        // Temp dir created when no profile
-        assert!(result.temp_user_data_dir.is_some());
-        let dir = result.temp_user_data_dir.unwrap();
-        assert!(dir.exists());
-        let _ = std::fs::remove_dir_all(&dir);
+        // Default profile is persistent (no temp dir cleanup)
+        assert!(result.temp_user_data_dir.is_none());
     }
 
     #[test]
-    fn test_build_args_temp_user_data_dir_created() {
+    fn test_build_args_persistent_profile_default_dir() {
         let opts = LaunchOptions::default();
         let result = build_chrome_args(&opts).unwrap();
-        let dir = result.temp_user_data_dir.as_ref().unwrap();
-        assert!(dir.exists());
+        // Persistent profile: no temp dir, user_data_dir points to ~/.web-action/profiles/main/
+        assert!(result.temp_user_data_dir.is_none());
+        assert!(result.user_data_dir.exists());
         assert!(result
             .args
             .iter()
             .any(|a| a.starts_with("--user-data-dir=")));
-        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(result.user_data_dir);
     }
 
     #[test]
@@ -1453,7 +1461,7 @@ mod tests {
         let result = build_chrome_args(&opts).unwrap();
         assert!(
             !result.args.iter().any(|a| a == "--hide-scrollbars"),
-            "--hide-scrollbars false should suppress agent-browser's default hide switch"
+            "--hide-scrollbars false should suppress web-action's default hide switch"
         );
         if let Some(ref dir) = result.temp_user_data_dir {
             let _ = std::fs::remove_dir_all(dir);
@@ -1570,7 +1578,7 @@ mod tests {
     #[test]
     fn test_chrome_process_drop_cleans_temp_dir() {
         let dir = std::env::temp_dir().join(format!(
-            "agent-browser-chrome-drop-test-{}",
+            "web-action-chrome-drop-test-{}",
             uuid::Uuid::new_v4()
         ));
         let _ = std::fs::create_dir_all(&dir);
@@ -1641,7 +1649,7 @@ mod tests {
     impl TempDir {
         fn new(name: &str) -> Self {
             Self(std::env::temp_dir().join(format!(
-                "agent-browser-test-{}-{}-{}",
+                "web-action-test-{}-{}-{}",
                 name,
                 std::process::id(),
                 std::time::SystemTime::now()

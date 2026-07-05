@@ -3,7 +3,7 @@ use std::path::Path;
 use std::process::{exit, Command, Stdio};
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const NPM_REGISTRY_URL: &str = "https://registry.npmjs.org/agent-browser/latest";
+const NPM_REGISTRY_URL: &str = "https://registry.npmjs.org/web-action/latest";
 
 enum InstallMethod {
     Npm,
@@ -62,7 +62,7 @@ fn detect_install_method() -> InstallMethod {
             return InstallMethod::Cargo;
         }
 
-        if path_str.contains("/Cellar/agent-browser/")
+        if path_str.contains("/Cellar/web-action/")
             || path_str.contains("/homebrew/")
             || path_str.contains("/linuxbrew/")
         {
@@ -81,8 +81,8 @@ fn detect_install_method() -> InstallMethod {
             return InstallMethod::Bun;
         }
 
-        if path_str.contains("node_modules/agent-browser")
-            || path_str.contains("node_modules\\agent-browser")
+        if path_str.contains("node_modules/web-action")
+            || path_str.contains("node_modules\\web-action")
         {
             return InstallMethod::Npm;
         }
@@ -92,28 +92,28 @@ fn detect_install_method() -> InstallMethod {
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
-        if command_succeeds("brew", &["list", "agent-browser"]) {
+        if command_succeeds("brew", &["list", "web-action"]) {
             return InstallMethod::Homebrew;
         }
     }
 
     if command_output_contains(
         "pnpm",
-        &["list", "-g", "agent-browser", "--depth=0"],
-        "agent-browser",
+        &["list", "-g", "web-action", "--depth=0"],
+        "web-action",
     ) {
         return InstallMethod::Pnpm;
     }
 
-    if command_output_contains("yarn", &["global", "list", "--depth=0"], "agent-browser") {
+    if command_output_contains("yarn", &["global", "list", "--depth=0"], "web-action") {
         return InstallMethod::Yarn;
     }
 
-    if command_output_contains("bun", &["pm", "ls", "-g"], "agent-browser") {
+    if command_output_contains("bun", &["pm", "ls", "-g"], "web-action") {
         return InstallMethod::Bun;
     }
 
-    if command_succeeds("npm", &["list", "-g", "agent-browser", "--depth=0"]) {
+    if command_succeeds("npm", &["list", "-g", "web-action", "--depth=0"]) {
         return InstallMethod::Npm;
     }
 
@@ -143,35 +143,35 @@ fn run_upgrade_command(method: &InstallMethod) -> bool {
     let (cmd, args, display): (&str, &[&str], &str) = match method {
         InstallMethod::Npm => (
             "npm",
-            &["install", "-g", "agent-browser@latest"],
-            "npm install -g agent-browser@latest",
+            &["install", "-g", "web-action@latest"],
+            "npm install -g web-action@latest",
         ),
         InstallMethod::Pnpm => (
             "pnpm",
-            &["add", "-g", "agent-browser@latest"],
-            "pnpm add -g agent-browser@latest",
+            &["add", "-g", "web-action@latest"],
+            "pnpm add -g web-action@latest",
         ),
         // NOTE: `yarn global` is Yarn Classic (v1) only; Yarn Berry (v2+) removed it.
         // Users on Yarn v2+ won't reach this path — detection falls through to Unknown.
         InstallMethod::Yarn => (
             "yarn",
-            &["global", "add", "agent-browser@latest"],
-            "yarn global add agent-browser@latest",
+            &["global", "add", "web-action@latest"],
+            "yarn global add web-action@latest",
         ),
         InstallMethod::Bun => (
             "bun",
-            &["install", "-g", "agent-browser@latest"],
-            "bun install -g agent-browser@latest",
+            &["install", "-g", "web-action@latest"],
+            "bun install -g web-action@latest",
         ),
         InstallMethod::Homebrew => (
             "brew",
-            &["upgrade", "agent-browser"],
-            "brew upgrade agent-browser",
+            &["upgrade", "web-action"],
+            "brew upgrade web-action",
         ),
         InstallMethod::Cargo => (
             "cargo",
-            &["install", "agent-browser", "--force"],
-            "cargo install agent-browser --force",
+            &["install", "web-action", "--force"],
+            "cargo install web-action --force",
         ),
         InstallMethod::Unknown => return false,
     };
@@ -213,7 +213,7 @@ pub fn run_upgrade() {
 
     if !latest.is_empty() && current == latest.as_str() {
         println!(
-            "{} agent-browser is already at the latest version (v{})",
+            "{} web-action is already at the latest version (v{})",
             color::success_indicator(),
             current
         );
@@ -238,12 +238,12 @@ pub fn run_upgrade() {
             color::error_indicator()
         );
         eprintln!("  To update manually, run one of:");
-        eprintln!("    npm install -g agent-browser@latest       # npm");
-        eprintln!("    pnpm add -g agent-browser@latest          # pnpm");
-        eprintln!("    yarn global add agent-browser@latest       # yarn");
-        eprintln!("    bun install -g agent-browser@latest        # bun");
-        eprintln!("    brew upgrade agent-browser                 # Homebrew");
-        eprintln!("    cargo install agent-browser --force        # Cargo");
+        eprintln!("    npm install -g web-action@latest       # npm");
+        eprintln!("    pnpm add -g web-action@latest          # pnpm");
+        eprintln!("    yarn global add web-action@latest       # yarn");
+        eprintln!("    bun install -g web-action@latest        # bun");
+        eprintln!("    brew upgrade web-action                 # Homebrew");
+        eprintln!("    cargo install web-action --force        # Cargo");
         exit(1);
     }
 
@@ -253,14 +253,14 @@ pub fn run_upgrade() {
         println!(
             "{}",
             color::cyan(&format!(
-                "Upgrading agent-browser... v{} → v{}",
+                "Upgrading web-action... v{} → v{}",
                 current, latest
             ))
         );
     } else {
         println!(
             "{}",
-            color::cyan(&format!("Upgrading agent-browser (v{})...", current))
+            color::cyan(&format!("Upgrading web-action (v{})...", current))
         );
     }
 

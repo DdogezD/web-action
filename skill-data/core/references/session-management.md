@@ -19,22 +19,22 @@ Multiple isolated browser sessions with state persistence and concurrent browsin
 Use `--session` to isolate browser contexts. Agent skills should derive one stable id and reuse it on every command:
 
 ```bash
-SESSION="$(agent-browser session id --scope worktree --prefix my-skill)"
-agent-browser --session "$SESSION" --restore open https://app.example.com/login
+SESSION="$(web-action session id --scope worktree --prefix my-skill)"
+web-action --session "$SESSION" --restore open https://app.example.com/login
 ```
 
 `--scope worktree` uses the Git worktree root when available, then the Git root, then the canonical current directory. This is the recommended default for agents because worktrees are commonly used for parallel agent runs.
 
 ```bash
 # Session 1: Authentication flow
-agent-browser --session auth open https://app.example.com/login
+web-action --session auth open https://app.example.com/login
 
 # Session 2: Public browsing (separate cookies, storage)
-agent-browser --session public open https://example.com
+web-action --session public open https://example.com
 
 # Commands are isolated by session
-agent-browser --session auth fill @e1 "user@example.com"
-agent-browser --session public get text body
+web-action --session auth fill @e1 "user@example.com"
+web-action --session public get text body
 ```
 
 ## Session Isolation Properties
@@ -53,27 +53,27 @@ Each session has independent:
 
 ```bash
 # Bare --restore uses the current --session as the persistence key
-SESSION="$(agent-browser session id --scope worktree --prefix next-dev-loop)"
-agent-browser --session "$SESSION" --restore open https://app.example.com/dashboard
+SESSION="$(web-action session id --scope worktree --prefix next-dev-loop)"
+web-action --session "$SESSION" --restore open https://app.example.com/dashboard
 ```
 
 State is loaded before navigation and saved on close, daemon shutdown, idle timeout, and compatible relaunch. The default save policy is `--restore-save auto`, which skips auto-save if restore failed or validation failed.
 
 ```bash
-agent-browser --session "$SESSION" --restore --restore-check-url "**/dashboard" open https://app.example.com/dashboard
-agent-browser --session "$SESSION" --restore --restore-check-text Dashboard open https://app.example.com/dashboard
-agent-browser --session "$SESSION" --restore --restore-check-fn "!!localStorage.getItem('session')" open https://app.example.com/dashboard
+web-action --session "$SESSION" --restore --restore-check-url "**/dashboard" open https://app.example.com/dashboard
+web-action --session "$SESSION" --restore --restore-check-text Dashboard open https://app.example.com/dashboard
+web-action --session "$SESSION" --restore --restore-check-fn "!!localStorage.getItem('session')" open https://app.example.com/dashboard
 ```
 
-Use `agent-browser session info --json` for diagnostics:
+Use `web-action session info --json` for diagnostics:
 
 ```bash
-agent-browser --session "$SESSION" session info --json
+web-action --session "$SESSION" session info --json
 ```
 
 ### Manual State Files
 
-Use `state save`, `state load`, and `--state <path>` when you need an explicit portable JSON file. Do not make agents construct paths under `~/.agent-browser/sessions/`; prefer `--restore` for reusable agent sessions.
+Use `state save`, `state load`, and `--state <path>` when you need an explicit portable JSON file. Do not make agents construct paths under `~/.web-action/sessions/`; prefer `--restore` for reusable agent sessions.
 
 ## Common Patterns
 
@@ -81,8 +81,8 @@ Use `state save`, `state load`, and `--state <path>` when you need an explicit p
 
 ```bash
 #!/bin/bash
-SESSION="$(agent-browser session id --scope worktree --prefix app)"
-agent-browser --session "$SESSION" --restore open https://app.example.com/dashboard
+SESSION="$(web-action session id --scope worktree --prefix app)"
+web-action --session "$SESSION" --restore open https://app.example.com/dashboard
 ```
 
 ### Concurrent Scraping
@@ -92,32 +92,32 @@ agent-browser --session "$SESSION" --restore open https://app.example.com/dashbo
 # Scrape multiple sites concurrently
 
 # Start all sessions
-agent-browser --session site1 open https://site1.com &
-agent-browser --session site2 open https://site2.com &
-agent-browser --session site3 open https://site3.com &
+web-action --session site1 open https://site1.com &
+web-action --session site2 open https://site2.com &
+web-action --session site3 open https://site3.com &
 wait
 
 # Extract from each
-agent-browser --session site1 get text body > site1.txt
-agent-browser --session site2 get text body > site2.txt
-agent-browser --session site3 get text body > site3.txt
+web-action --session site1 get text body > site1.txt
+web-action --session site2 get text body > site2.txt
+web-action --session site3 get text body > site3.txt
 
 # Cleanup
-agent-browser --session site1 close
-agent-browser --session site2 close
-agent-browser --session site3 close
+web-action --session site1 close
+web-action --session site2 close
+web-action --session site3 close
 ```
 
 ### A/B Testing Sessions
 
 ```bash
 # Test different user experiences
-agent-browser --session variant-a open "https://app.com?variant=a"
-agent-browser --session variant-b open "https://app.com?variant=b"
+web-action --session variant-a open "https://app.com?variant=a"
+web-action --session variant-b open "https://app.com?variant=b"
 
 # Compare
-agent-browser --session variant-a screenshot /tmp/variant-a.png
-agent-browser --session variant-b screenshot /tmp/variant-b.png
+web-action --session variant-a screenshot /tmp/variant-a.png
+web-action --session variant-b screenshot /tmp/variant-b.png
 ```
 
 ## Default Session
@@ -126,19 +126,19 @@ When `--session` is omitted, commands use the default session:
 
 ```bash
 # These use the same default session
-agent-browser open https://example.com
-agent-browser snapshot -i
-agent-browser close  # Closes default session
+web-action open https://example.com
+web-action snapshot -i
+web-action close  # Closes default session
 ```
 
 ## Session Cleanup
 
 ```bash
 # Close specific session
-agent-browser --session auth close
+web-action --session auth close
 
 # List active sessions
-agent-browser session list
+web-action session list
 ```
 
 ## Best Practices
@@ -147,19 +147,19 @@ agent-browser session list
 
 ```bash
 # GOOD: Clear purpose
-agent-browser --session github-auth open https://github.com
-agent-browser --session docs-scrape open https://docs.example.com
+web-action --session github-auth open https://github.com
+web-action --session docs-scrape open https://docs.example.com
 
 # AVOID: Generic names
-agent-browser --session s1 open https://github.com
+web-action --session s1 open https://github.com
 ```
 
 ### 2. Always Clean Up
 
 ```bash
 # Close sessions when done
-agent-browser --session auth close
-agent-browser --session scrape close
+web-action --session auth close
+web-action --session scrape close
 ```
 
 ### 3. Handle State Files Securely
@@ -176,5 +176,5 @@ rm /tmp/auth-state.json
 
 ```bash
 # Set timeout for automated scripts
-timeout 60 agent-browser --session long-task get text body
+timeout 60 web-action --session long-task get text body
 ```

@@ -1,11 +1,11 @@
 [package]
-name = "agent-browser"
+name = "web-action"
 version = "0.31.1"
 edition = "2021"
-description = "Fast browser automation CLI for AI agents"
+description = "Headless browser automation CLI for AI agents - persistent sessions with stealth"
 license = "Apache-2.0"
-repository = "https://github.com/vercel-labs/agent-browser"
-homepage = "https://agent-browser.dev"
+repository = "https://github.com/DdogezD/web-action"
+homepage = "https://github.com/DdogezD/web-action"
 readme = "../README.md"
 keywords = ["browser", "automation", "ai", "cdp", "chrome"]
 categories = ["command-line-utilities", "web-programming"]

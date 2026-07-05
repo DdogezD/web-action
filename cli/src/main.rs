@@ -226,7 +226,7 @@ fn run_interactive_confirmations(
     output_opts: &OutputOptions,
 ) -> Response {
     while let Some(prompt) = confirmation_prompt_from_response(&resp) {
-        eprintln!("[agent-browser] Action requires confirmation:");
+        eprintln!("[web-action] Action requires confirmation:");
         if prompt.category.is_empty() {
             eprintln!("  {}", prompt.description);
         } else {
@@ -535,7 +535,7 @@ fn run_session_info(session: &str, json_mode: bool) {
             "success": true,
             "data": {
                 "session": session,
-                "namespace": env::var("AGENT_BROWSER_NAMESPACE").ok(),
+                "namespace": env::var("WEB_ACTION_NAMESPACE").ok(),
                 "socketDir": get_socket_dir().to_string_lossy(),
                 "active": active.is_some(),
                 "pid": active.map(|s| s.pid),
@@ -549,7 +549,7 @@ fn run_session_info(session: &str, json_mode: bool) {
 
     println!("Session: {}", session);
     println!("Socket dir: {}", get_socket_dir().to_string_lossy());
-    if let Ok(namespace) = env::var("AGENT_BROWSER_NAMESPACE") {
+    if let Ok(namespace) = env::var("WEB_ACTION_NAMESPACE") {
         println!("Namespace: {}", namespace);
     }
     if let Some(active) = active {
@@ -673,8 +673,8 @@ fn run_dashboard_start(port: u16, json_mode: bool) {
     };
 
     let mut cmd = std::process::Command::new(&exe_path);
-    cmd.env("AGENT_BROWSER_DASHBOARD", "1")
-        .env("AGENT_BROWSER_DASHBOARD_PORT", port.to_string());
+    cmd.env("WEB_ACTION_DASHBOARD", "1")
+        .env("WEB_ACTION_DASHBOARD_PORT", port.to_string());
 
     #[cfg(unix)]
     {
@@ -884,23 +884,23 @@ fn main() {
         env::set_var("MSYS2_ARG_CONV_EXCL", "*");
     }
 
-    // Native daemon mode: when AGENT_BROWSER_DAEMON is set, run as the daemon process
-    if env::var("AGENT_BROWSER_DAEMON").is_ok() {
+    // Native daemon mode: when WEB_ACTION_DAEMON is set, run as the daemon process
+    if env::var("WEB_ACTION_DAEMON").is_ok() {
         // Ignore SIGPIPE so the daemon isn't killed when the parent drops
         // the piped stderr handle after confirming the daemon is ready.
         #[cfg(unix)]
         unsafe {
             libc::signal(libc::SIGPIPE, libc::SIG_IGN);
         }
-        let session = env::var("AGENT_BROWSER_SESSION").unwrap_or_else(|_| "default".to_string());
+        let session = env::var("WEB_ACTION_SESSION").unwrap_or_else(|_| "default".to_string());
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
         rt.block_on(native::daemon::run_daemon(&session));
         return;
     }
 
     // Standalone dashboard server mode
-    if env::var("AGENT_BROWSER_DASHBOARD").is_ok() {
-        let port: u16 = env::var("AGENT_BROWSER_DASHBOARD_PORT")
+    if env::var("WEB_ACTION_DASHBOARD").is_ok() {
+        let port: u16 = env::var("WEB_ACTION_DASHBOARD_PORT")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(4848);
@@ -915,7 +915,7 @@ fn main() {
         flags.restore = Some(flags.session.clone());
     }
     if let Some(ref namespace) = flags.namespace {
-        env::set_var("AGENT_BROWSER_NAMESPACE", namespace);
+        env::set_var("WEB_ACTION_NAMESPACE", namespace);
     }
     let clean = clean_args(&args);
 
@@ -1107,6 +1107,10 @@ fn main() {
     // current config without a restart. The daemon strips this from stream
     // broadcasts before observers see the command payload.
     attach_plugins_to_command(&mut cmd, &flags.plugins);
+
+    // Inject tabName for tab isolation routing. Each CLI client can operate
+    // an independent named tab within the shared browser instance.
+    cmd["tabName"] = json!(flags.tabname);
     attach_restore_config_to_command(&mut cmd, &flags);
 
     let restore_key = restore_key_from_flags(&flags);
@@ -1876,7 +1880,7 @@ mod tests {
     fn test_attach_plugins_to_command_adds_registry_payload() {
         let plugins = vec![crate::plugins::PluginConfig {
             name: "stealth".to_string(),
-            command: "agent-browser-plugin-stealth".to_string(),
+            command: "web-action-plugin-stealth".to_string(),
             capabilities: vec!["launch.mutate".to_string()],
             ..crate::plugins::PluginConfig::default()
         }];

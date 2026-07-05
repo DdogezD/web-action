@@ -29,7 +29,7 @@ pub async fn run_daemon(session: &str) {
     // output can be inspected (the daemon normally has stderr piped to its
     // parent which drops the read end after startup).
     #[cfg(unix)]
-    if env::var("AGENT_BROWSER_DEBUG").is_ok() {
+    if env::var("WEB_ACTION_DEBUG").is_ok() {
         let log_path = socket_dir.join(format!("{}.log", session));
         if let Ok(file) = fs::File::create(&log_path) {
             use std::os::unix::io::IntoRawFd;
@@ -88,7 +88,7 @@ pub async fn run_daemon(session: &str) {
     let _ = fs::remove_file(socket_dir.join(format!("{}.provider", session)));
     let _ = fs::remove_file(socket_dir.join(format!("{}.extensions", session)));
 
-    if let Ok(days_str) = env::var("AGENT_BROWSER_STATE_EXPIRE_DAYS") {
+    if let Ok(days_str) = env::var("WEB_ACTION_STATE_EXPIRE_DAYS") {
         if let Ok(days) = days_str.parse::<u64>() {
             if days > 0 {
                 let _ = state::state_clean(days);
@@ -98,7 +98,7 @@ pub async fn run_daemon(session: &str) {
 
     let mut stream_client: Option<Arc<RwLock<Option<Arc<CdpClient>>>>> = None;
     let mut stream_server_instance: Option<Arc<StreamServer>> = None;
-    let preferred_port = env::var("AGENT_BROWSER_STREAM_PORT")
+    let preferred_port = env::var("WEB_ACTION_STREAM_PORT")
         .ok()
         .and_then(|s| s.parse::<u16>().ok())
         .unwrap_or(0);
@@ -117,7 +117,7 @@ pub async fn run_daemon(session: &str) {
 
     // Auto-shutdown the daemon after this many ms of inactivity (no commands received).
     // Disabled when unset or 0.
-    let idle_timeout_ms = env::var("AGENT_BROWSER_IDLE_TIMEOUT_MS")
+    let idle_timeout_ms = env::var("WEB_ACTION_IDLE_TIMEOUT_MS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .filter(|&ms| ms > 0);
@@ -530,14 +530,14 @@ mod tests {
     #[test]
     fn test_daemon_socket_dir_matches_client_namespace() {
         let guard = crate::test_utils::EnvGuard::new(&[
-            "AGENT_BROWSER_SOCKET_DIR",
+            "WEB_ACTION_SOCKET_DIR",
             "XDG_RUNTIME_DIR",
-            "AGENT_BROWSER_NAMESPACE",
+            "WEB_ACTION_NAMESPACE",
         ]);
         let dir = tempfile::tempdir().unwrap();
-        guard.set("AGENT_BROWSER_SOCKET_DIR", dir.path().to_str().unwrap());
+        guard.set("WEB_ACTION_SOCKET_DIR", dir.path().to_str().unwrap());
         guard.remove("XDG_RUNTIME_DIR");
-        guard.set("AGENT_BROWSER_NAMESPACE", "Worktree: One");
+        guard.set("WEB_ACTION_NAMESPACE", "Worktree: One");
 
         let socket_dir = get_daemon_socket_dir();
 
@@ -552,8 +552,8 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn test_port_matches_client_algorithm() {
-        let guard = crate::test_utils::EnvGuard::new(&["AGENT_BROWSER_NAMESPACE"]);
-        guard.remove("AGENT_BROWSER_NAMESPACE");
+        let guard = crate::test_utils::EnvGuard::new(&["WEB_ACTION_NAMESPACE"]);
+        guard.remove("WEB_ACTION_NAMESPACE");
 
         assert_eq!(get_port_for_session("default"), 50838);
         assert_eq!(get_port_for_session("my-session"), 63105);

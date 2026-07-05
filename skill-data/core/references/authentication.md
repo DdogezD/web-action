@@ -45,19 +45,19 @@ Log in to your target site(s) in this Chrome window as you normally would.
 
 ```bash
 # Auto-discover the running Chrome and save its cookies + localStorage
-agent-browser --auto-connect state save ./my-auth.json
+web-action --auto-connect state save ./my-auth.json
 ```
 
 **Step 3: Reuse in automation**
 
 ```bash
 # Load auth at launch
-agent-browser --state ./my-auth.json open https://app.example.com/dashboard
+web-action --state ./my-auth.json open https://app.example.com/dashboard
 
 # Or load into an already-launched session
-agent-browser open about:blank
-agent-browser state load ./my-auth.json
-agent-browser open https://app.example.com/dashboard
+web-action open about:blank
+web-action state load ./my-auth.json
+web-action open https://app.example.com/dashboard
 ```
 
 This works for any site, including those with complex OAuth flows, SSO, or 2FA, as long as Chrome already has valid session cookies.
@@ -67,36 +67,36 @@ This works for any site, including those with complex OAuth flows, SSO, or 2FA, 
 **Tip:** Combine with `--session <id> --restore` so the imported auth auto-persists across restarts:
 
 ```bash
-SESSION="$(agent-browser session id --scope worktree --prefix myapp)"
-agent-browser --session "$SESSION" --restore --state ./my-auth.json open https://app.example.com/dashboard
+SESSION="$(web-action session id --scope worktree --prefix myapp)"
+web-action --session "$SESSION" --restore --state ./my-auth.json open https://app.example.com/dashboard
 # From now on, state is auto-saved/restored for this session
 ```
 
 ## Persistent Profiles
 
-Use `--profile` to point agent-browser at a Chrome user data directory. This persists everything (cookies, IndexedDB, service workers, cache) across browser restarts without explicit save/load:
+Use `--profile` to point web-action at a Chrome user data directory. This persists everything (cookies, IndexedDB, service workers, cache) across browser restarts without explicit save/load:
 
 ```bash
 # First run: login once
-agent-browser --profile ~/.myapp-profile open https://app.example.com/login
+web-action --profile ~/.myapp-profile open https://app.example.com/login
 # ... complete login flow ...
 
 # All subsequent runs: already authenticated
-agent-browser --profile ~/.myapp-profile open https://app.example.com/dashboard
+web-action --profile ~/.myapp-profile open https://app.example.com/dashboard
 ```
 
 Use different paths for different projects or test users:
 
 ```bash
-agent-browser --profile ~/.profiles/admin open https://app.example.com
-agent-browser --profile ~/.profiles/viewer open https://app.example.com
+web-action --profile ~/.profiles/admin open https://app.example.com
+web-action --profile ~/.profiles/viewer open https://app.example.com
 ```
 
 Or set via environment variable:
 
 ```bash
 export AGENT_BROWSER_PROFILE=~/.myapp-profile
-agent-browser open https://app.example.com/dashboard
+web-action open https://app.example.com/dashboard
 ```
 
 ## Session Persistence
@@ -105,55 +105,55 @@ Use `--restore` with a stable `--session` to auto-save and restore cookies + loc
 
 ```bash
 # Auto-saves state on close, auto-restores on next launch
-SESSION="$(agent-browser session id --scope worktree --prefix twitter)"
-agent-browser --session "$SESSION" --restore open https://twitter.com
+SESSION="$(web-action session id --scope worktree --prefix twitter)"
+web-action --session "$SESSION" --restore open https://twitter.com
 # ... login flow ...
-agent-browser --session "$SESSION" --restore close  # state saved to ~/.agent-browser/sessions/
+web-action --session "$SESSION" --restore close  # state saved to ~/.web-action/sessions/
 
 # Next time: state is automatically restored
-agent-browser --session "$SESSION" --restore open https://twitter.com
+web-action --session "$SESSION" --restore open https://twitter.com
 ```
 
 Encrypt state at rest:
 
 ```bash
 export AGENT_BROWSER_ENCRYPTION_KEY=$(openssl rand -hex 32)
-agent-browser --session secure --restore open https://app.example.com
+web-action --session secure --restore open https://app.example.com
 ```
 
 ## Basic Login Flow
 
 ```bash
 # Navigate to login page
-agent-browser open https://app.example.com/login
-agent-browser wait --load networkidle
+web-action open https://app.example.com/login
+web-action wait --load networkidle
 
 # Get form elements
-agent-browser snapshot -i
+web-action snapshot -i
 # Output: @e1 [input type="email"], @e2 [input type="password"], @e3 [button] "Sign In"
 
 # Fill credentials
-agent-browser fill @e1 "user@example.com"
-agent-browser fill @e2 "password123"
+web-action fill @e1 "user@example.com"
+web-action fill @e2 "password123"
 
 # Submit
-agent-browser click @e3
-agent-browser wait --load networkidle
+web-action click @e3
+web-action wait --load networkidle
 
 # Verify login succeeded
-agent-browser get url  # Should be dashboard, not login
+web-action get url  # Should be dashboard, not login
 ```
 
 ## Plugins
 
-Use credential provider plugins when credentials live in external vault software. Plugins are configured in `agent-browser.json` and run as external executables over the `agent-browser.plugin.v1` stdio JSON protocol.
+Use credential provider plugins when credentials live in external vault software. Plugins are configured in `web-action.json` and run as external executables over the `web-action.plugin.v1` stdio JSON protocol.
 
 Add a plugin with `plugin add`. A plain `name` or `@scope/name` resolves from npm; `owner/repo` resolves from GitHub:
 
 ```bash
-agent-browser plugin add agent-browser-plugin-vault --name vault
-agent-browser plugin add @company/agent-browser-plugin-vault --name vault
-agent-browser plugin add org/agent-browser-plugin-cloud-browser
+web-action plugin add web-action-plugin-vault --name vault
+web-action plugin add @company/web-action-plugin-vault --name vault
+web-action plugin add org/web-action-plugin-cloud-browser
 ```
 
 ```json
@@ -161,22 +161,22 @@ agent-browser plugin add org/agent-browser-plugin-cloud-browser
   "plugins": [
     {
       "name": "vault",
-      "command": "agent-browser-plugin-vault",
+      "command": "web-action-plugin-vault",
       "capabilities": ["credential.read"]
     },
     {
       "name": "cloud-browser",
-      "command": "agent-browser-plugin-cloud-browser",
+      "command": "web-action-plugin-cloud-browser",
       "capabilities": ["browser.provider"]
     },
     {
       "name": "stealth",
-      "command": "agent-browser-plugin-stealth",
+      "command": "web-action-plugin-stealth",
       "capabilities": ["launch.mutate"]
     },
     {
       "name": "captcha",
-      "command": "agent-browser-plugin-captcha",
+      "command": "web-action-plugin-captcha",
       "capabilities": ["command.run", "captcha.solve"]
     }
   ]
@@ -186,21 +186,21 @@ agent-browser plugin add org/agent-browser-plugin-cloud-browser
 Inspect configured plugins before use:
 
 ```bash
-agent-browser plugin list
-agent-browser plugin show vault
+web-action plugin list
+web-action plugin show vault
 ```
 
 Resolve credentials just-in-time for one login:
 
 ```bash
-agent-browser auth login my-app --credential-provider vault --item "My App"
+web-action auth login my-app --credential-provider vault --item "My App"
 ```
 
 Use a plugin as a browser provider or a generic domain command:
 
 ```bash
-agent-browser --provider cloud-browser open https://example.com
-agent-browser plugin run captcha captcha.solve --payload '{"siteKey":"...","url":"https://example.com"}'
+web-action --provider cloud-browser open https://example.com
+web-action plugin run captcha captcha.solve --payload '{"siteKey":"...","url":"https://example.com"}'
 ```
 
 `plugin run` is for `command.run` and custom capabilities. Core capabilities and protocol request types use their dedicated command paths.
@@ -210,12 +210,12 @@ Use `--url`, `--username-selector`, `--password-selector`, and `--submit-selecto
 Gate plugin secret access separately from normal login automation:
 
 ```bash
-agent-browser --confirm-actions plugin:vault:credential.read auth login my-app --credential-provider vault --item "My App"
-agent-browser --confirm-actions plugin:cloud-browser:browser.provider --provider cloud-browser open https://example.com
-agent-browser --confirm-actions plugin:stealth:launch.mutate open https://example.com
+web-action --confirm-actions plugin:vault:credential.read auth login my-app --credential-provider vault --item "My App"
+web-action --confirm-actions plugin:cloud-browser:browser.provider --provider cloud-browser open https://example.com
+web-action --confirm-actions plugin:stealth:launch.mutate open https://example.com
 ```
 
-Do not put vault tokens or passwords in plugin command args. Use the vault vendor's own login/session mechanism or environment outside agent-browser config.
+Do not put vault tokens or passwords in plugin command args. Use the vault vendor's own login/session mechanism or environment outside web-action config.
 
 ## Saving Authentication State
 
@@ -223,15 +223,15 @@ After logging in, save state for reuse:
 
 ```bash
 # Login first (see above)
-agent-browser open https://app.example.com/login
-agent-browser snapshot -i
-agent-browser fill @e1 "user@example.com"
-agent-browser fill @e2 "password123"
-agent-browser click @e3
-agent-browser wait --url "**/dashboard"
+web-action open https://app.example.com/login
+web-action snapshot -i
+web-action fill @e1 "user@example.com"
+web-action fill @e2 "password123"
+web-action click @e3
+web-action wait --url "**/dashboard"
 
 # Save authenticated state
-agent-browser state save ./auth-state.json
+web-action state save ./auth-state.json
 ```
 
 ## Restoring Authentication
@@ -240,13 +240,13 @@ Skip login by loading saved state:
 
 ```bash
 # Load saved auth state
-agent-browser state load ./auth-state.json
+web-action state load ./auth-state.json
 
 # Navigate directly to protected page
-agent-browser open https://app.example.com/dashboard
+web-action open https://app.example.com/dashboard
 
 # Verify authenticated
-agent-browser snapshot -i
+web-action snapshot -i
 ```
 
 ## OAuth / SSO Flows
@@ -255,23 +255,23 @@ For OAuth redirects:
 
 ```bash
 # Start OAuth flow
-agent-browser open https://app.example.com/auth/google
+web-action open https://app.example.com/auth/google
 
 # Handle redirects automatically
-agent-browser wait --url "**/accounts.google.com**"
-agent-browser snapshot -i
+web-action wait --url "**/accounts.google.com**"
+web-action snapshot -i
 
 # Fill Google credentials
-agent-browser fill @e1 "user@gmail.com"
-agent-browser click @e2  # Next button
-agent-browser wait 2000
-agent-browser snapshot -i
-agent-browser fill @e3 "password"
-agent-browser click @e4  # Sign in
+web-action fill @e1 "user@gmail.com"
+web-action click @e2  # Next button
+web-action wait 2000
+web-action snapshot -i
+web-action fill @e3 "password"
+web-action click @e4  # Sign in
 
 # Wait for redirect back
-agent-browser wait --url "**/app.example.com**"
-agent-browser state save ./oauth-state.json
+web-action wait --url "**/app.example.com**"
+web-action state save ./oauth-state.json
 ```
 
 ## Two-Factor Authentication
@@ -280,18 +280,18 @@ Handle 2FA with manual intervention:
 
 ```bash
 # Login with credentials
-agent-browser open https://app.example.com/login --headed  # Show browser
-agent-browser snapshot -i
-agent-browser fill @e1 "user@example.com"
-agent-browser fill @e2 "password123"
-agent-browser click @e3
+web-action open https://app.example.com/login --headed  # Show browser
+web-action snapshot -i
+web-action fill @e1 "user@example.com"
+web-action fill @e2 "password123"
+web-action click @e3
 
 # Wait for user to complete 2FA manually
 echo "Complete 2FA in the browser window..."
-agent-browser wait --url "**/dashboard" --timeout 120000
+web-action wait --url "**/dashboard" --timeout 120000
 
 # Save state after 2FA
-agent-browser state save ./2fa-state.json
+web-action state save ./2fa-state.json
 ```
 
 ## HTTP Basic Auth
@@ -300,10 +300,10 @@ For sites using HTTP Basic Authentication:
 
 ```bash
 # Set credentials before navigation
-agent-browser set credentials username password
+web-action set credentials username password
 
 # Navigate to protected resource
-agent-browser open https://protected.example.com/api
+web-action open https://protected.example.com/api
 ```
 
 ## Cookie-Based Auth
@@ -312,10 +312,10 @@ Manually set authentication cookies:
 
 ```bash
 # Set auth cookie
-agent-browser cookies set session_token "abc123xyz"
+web-action cookies set session_token "abc123xyz"
 
 # Navigate to protected page
-agent-browser open https://app.example.com/dashboard
+web-action open https://app.example.com/dashboard
 ```
 
 ## Token Refresh Handling
@@ -330,24 +330,24 @@ STATE_FILE="./auth-state.json"
 
 # Try loading existing state
 if [[ -f "$STATE_FILE" ]]; then
-    agent-browser state load "$STATE_FILE"
-    agent-browser open https://app.example.com/dashboard
+    web-action state load "$STATE_FILE"
+    web-action open https://app.example.com/dashboard
 
     # Check if session is still valid
-    URL=$(agent-browser get url)
+    URL=$(web-action get url)
     if [[ "$URL" == *"/login"* ]]; then
         echo "Session expired, re-authenticating..."
         # Perform fresh login
-        agent-browser snapshot -i
-        agent-browser fill @e1 "$USERNAME"
-        agent-browser fill @e2 "$PASSWORD"
-        agent-browser click @e3
-        agent-browser wait --url "**/dashboard"
-        agent-browser state save "$STATE_FILE"
+        web-action snapshot -i
+        web-action fill @e1 "$USERNAME"
+        web-action fill @e2 "$PASSWORD"
+        web-action click @e3
+        web-action wait --url "**/dashboard"
+        web-action state save "$STATE_FILE"
     fi
 else
     # First-time login
-    agent-browser open https://app.example.com/login
+    web-action open https://app.example.com/login
     # ... login flow ...
 fi
 ```
@@ -361,20 +361,20 @@ fi
 
 2. **Use environment variables for credentials**
    ```bash
-   agent-browser fill @e1 "$APP_USERNAME"
-   agent-browser fill @e2 "$APP_PASSWORD"
+   web-action fill @e1 "$APP_USERNAME"
+   web-action fill @e2 "$APP_PASSWORD"
    ```
 
 3. **Clean up after automation**
    ```bash
-   agent-browser cookies clear
+   web-action cookies clear
    rm -f ./auth-state.json
    ```
 
 4. **Use short-lived sessions for CI/CD**
    ```bash
    # Don't persist state in CI
-   agent-browser open https://app.example.com/login
+   web-action open https://app.example.com/login
    # ... login and perform actions ...
-   agent-browser close  # Session ends, nothing persisted
+   web-action close  # Session ends, nothing persisted
    ```
