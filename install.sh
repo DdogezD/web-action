@@ -99,8 +99,8 @@ fi
 # ── Verify ─────────────────────────────────────────────────────
 
 if command -v web-action >/dev/null 2>&1; then
-    VERSION=$(web-action --version 2>/dev/null || echo "unknown")
-    info "web-action $VERSION is ready."
+	VERSION=$(web-action --version 2>/dev/null | sed 's/^web-action //' || echo "unknown")
+	info "web-action $VERSION is ready."
 elif [ -x "$BIN_DIR/web-action" ]; then
     PATH="$BIN_DIR:$PATH" web-action --version 2>/dev/null && \
         info "web-action installed. Add $BIN_DIR to your PATH to use it." || \
