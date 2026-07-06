@@ -14,6 +14,7 @@ Forked from [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-bro
 | **Tab routing** | Index-based (`tab 0`, `tab 1`) | `--tabname` named labels (parallel-safe) |
 | **Iframe interaction** | Manual `frame`/`mainframe` commands only | Snapshot auto-inlines iframe content with frame boundary annotations; refs work transparently across frames; `--frame <sel>` scopes any CSS-selector command to a single iframe (supports ref, CSS, name, title, and URL matching) |
 | **Engine** | Playwright-flavored CDP flags | Minimal flags that don't signal automation |
+| **Permissions** | Batch grant only via `Browser.grantPermissions` (no origin parameter) | `permissions` CLI with per-type grant/deny/prompt/reset via `Browser.setPermission`, explicit origin scoping |
 
 ## Installation
 
