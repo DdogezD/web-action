@@ -265,8 +265,12 @@ fn minimal_command(action: &str, id: &str) -> Value {
             obj.insert("index".to_string(), json!(0));
         }
         "viewport" | "user_agent" | "set_media" | "timezone" | "locale" | "geolocation"
-        | "permissions" | "device" => {
+        | "device" => {
             obj.insert("value".to_string(), json!(null));
+        }
+        "permissions" => {
+            obj.insert("subaction".to_string(), json!("grant"));
+            obj.insert("name".to_string(), json!("geolocation"));
         }
         "headers" => {
             obj.insert("headers".to_string(), json!({}));

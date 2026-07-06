@@ -10,6 +10,9 @@ use super::cdp::chrome::{auto_connect_cdp, launch_chrome, ChromeProcess, LaunchO
 use super::cdp::client::CdpClient;
 use super::cdp::discovery::discover_cdp_url;
 use super::cdp::lightpanda::{launch_lightpanda, LightpandaLaunchOptions, LightpandaProcess};
+use super::cdp::types::generated::cdp_browser::{
+    PermissionDescriptor, PermissionSetting, ResetPermissionsParams, SetPermissionParams,
+};
 use super::cdp::types::*;
 use super::element::{resolve_element_object_id, RefMap};
 
@@ -1477,11 +1480,42 @@ impl BrowserManager {
         Ok(())
     }
 
-    pub async fn grant_permissions(&self, permissions: &[String]) -> Result<(), String> {
+    pub async fn set_permission(
+        &self,
+        name: &str,
+        setting: PermissionSetting,
+        origin: Option<&str>,
+    ) -> Result<(), String> {
         self.client
-            .send_command(
-                "Browser.grantPermissions",
-                Some(json!({ "permissions": permissions })),
+            .send_command_typed::<_, Value>(
+                "Browser.setPermission",
+                &SetPermissionParams {
+                    permission: PermissionDescriptor {
+                        name: name.to_string(),
+                        sysex: None,
+                        user_visible_only: None,
+                        allow_without_sanitization: None,
+                        allow_without_gesture: None,
+                        pan_tilt_zoom: None,
+                    },
+                    setting,
+                    origin: origin.map(|s| s.to_string()),
+                    embedded_origin: None,
+                    browser_context_id: None,
+                },
+                None,
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn reset_permissions(&self) -> Result<(), String> {
+        self.client
+            .send_command_typed::<_, Value>(
+                "Browser.resetPermissions",
+                &ResetPermissionsParams {
+                    browser_context_id: None,
+                },
                 None,
             )
             .await?;

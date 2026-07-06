@@ -21,6 +21,7 @@ use super::cdp::types::{
     DispatchMouseEventParams, ExceptionThrownEvent, JavascriptDialogOpeningEvent,
     TargetCreatedEvent, TargetDestroyedEvent, TargetInfoChangedEvent,
 };
+use super::cdp::types::generated::cdp_browser::PermissionSetting;
 use super::cookies;
 use super::diff;
 use super::element::RefMap;
@@ -5758,18 +5759,49 @@ async fn handle_geolocation(cmd: &Value, state: &DaemonState) -> Result<Value, S
 
 async fn handle_permissions(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
-    let permissions: Vec<String> = cmd
-        .get("permissions")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
+    let origin = cmd.get("origin").and_then(|v| v.as_str());
 
-    mgr.grant_permissions(&permissions).await?;
-    Ok(json!({ "granted": permissions }))
+    match cmd
+        .get("subaction")
+        .and_then(|v| v.as_str())
+        .unwrap_or("grant")
+    {
+        "grant" => {
+            let name = cmd
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'name' for permission grant")?;
+            mgr.set_permission(name, PermissionSetting::Granted, origin)
+                .await?;
+            Ok(json!({ "permission": name, "setting": "granted" }))
+        }
+        "deny" => {
+            let name = cmd
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'name' for permission deny")?;
+            mgr.set_permission(name, PermissionSetting::Denied, origin)
+                .await?;
+            Ok(json!({ "permission": name, "setting": "denied" }))
+        }
+        "prompt" => {
+            let name = cmd
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'name' for permission reset")?;
+            mgr.set_permission(name, PermissionSetting::Prompt, origin)
+                .await?;
+            Ok(json!({ "permission": name, "setting": "prompt" }))
+        }
+        "reset" => {
+            mgr.reset_permissions().await?;
+            Ok(json!({ "reset": true }))
+        }
+        other => Err(format!(
+            "Unknown permissions subcommand '{}'. Use grant, deny, prompt, or reset.",
+            other
+        )),
+    }
 }
 
 async fn handle_dialog(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {

@@ -156,6 +156,7 @@ pub fn is_top_level_command(value: &str) -> bool {
             | "plugin"
             | "plugins"
             | "chat"
+            | "permissions"
     )
 }
 
@@ -1923,6 +1924,40 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
                 Some(sub) => Err(ParseError::UnknownSubcommand {
                     subcommand: sub.to_string(),
                     valid_options: &["list"],
+                }),
+            }
+        }
+
+        "permissions" => {
+            const VALID: &[&str] = &["grant", "deny", "prompt", "reset"];
+            let sub = rest.first().copied().unwrap_or("grant");
+            let name = rest
+                .get(1)
+                .and_then(|s| if s.starts_with("--") { None } else { Some(*s) });
+            let origin = rest
+                .iter()
+                .position(|a| *a == "--origin")
+                .and_then(|i| rest.get(i + 1).copied());
+
+            match sub {
+                "reset" => Ok(json!({ "id": id, "action": "permissions", "subaction": "reset" })),
+                "grant" | "deny" | "prompt" => {
+                    let name = name.ok_or_else(|| ParseError::MissingArguments {
+                        context: "permissions".to_string(),
+                        usage: "permissions <grant|deny|prompt|reset> [name] [--origin <url>]",
+                    })?;
+                    let mut cmd = json!({
+                        "id": id, "action": "permissions",
+                        "subaction": sub, "name": name
+                    });
+                    if let Some(o) = origin {
+                        cmd["origin"] = json!(o);
+                    }
+                    Ok(cmd)
+                }
+                _ => Err(ParseError::UnknownSubcommand {
+                    subcommand: sub.to_string(),
+                    valid_options: VALID,
                 }),
             }
         }
