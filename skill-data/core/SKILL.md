@@ -365,6 +365,17 @@ web-action dialog accept "text"    # accept with prompt input
 web-action dialog dismiss          # cancel
 ```
 
+### Permissions
+
+Control browser permissions per origin (geolocation, camera, etc.). Uses `Browser.setPermission` with fine-grained `granted` / `denied` / `prompt` states:
+
+```bash
+web-action permissions grant geolocation --origin https://example.com
+web-action permissions deny camera
+web-action permissions prompt midi      # reset to "ask" state
+web-action permissions reset            # clear all permissions
+```
+
 ## Diagnosing install issues
 
 If a command fails unexpectedly (`Unknown command`, `Failed to connect`, stale daemons, version mismatches after `upgrade`, missing Chrome, etc.) run `doctor` before anything else:

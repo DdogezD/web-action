@@ -104,6 +104,10 @@ web-action eval <js>             # Run JavaScript in page
 ### Browser
 ```bash
 web-action close                 # Close browser (daemon exits)
+web-action permissions grant <name> [--origin <url>]   # Grant permission
+web-action permissions deny <name> [--origin <url>]     # Deny permission
+web-action permissions prompt <name> [--origin <url>]   # Reset to "ask" state
+web-action permissions reset                             # Clear all permissions
 ```
 
 ## Stealth (anti-detection)

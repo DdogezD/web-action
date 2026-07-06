@@ -1960,6 +1960,34 @@ Examples:
 "##
         }
 
+        // === Permissions ===
+        "permissions" => {
+            r##"
+web-action permissions - Control browser permissions per origin
+
+Usage: web-action permissions <grant|deny|prompt|reset> <name> [--origin <url>]
+
+Uses the Browser.setPermission CDP API for fine-grained per-type control
+(granted / denied / prompt) with explicit origin scoping.
+
+Subcommands:
+  grant   <name>  Grant a permission for the origin
+  deny    <name>  Deny a permission for the origin
+  prompt  <name>  Reset a permission back to "ask" for the origin
+  reset           Clear all granted/denied permissions (Browser.resetPermissions)
+
+Options:
+  --origin <url>  Scope the permission to a specific origin. When omitted,
+                  defaults to the current page's origin.
+
+Examples:
+  web-action permissions grant geolocation --origin https://example.com
+  web-action permissions deny camera
+  web-action permissions prompt midi
+  web-action permissions reset
+"##
+        }
+
         // === Inspect ===
         "inspect" => {
             r##"
@@ -3339,6 +3367,7 @@ Core Commands:
   eval <js>                  Run JavaScript
   connect <port|url>         Connect to browser via CDP
   close [--all]              Close browser (--all closes every session)
+  permissions <grant|deny|prompt|reset> <name> [--origin <url>]   Control browser permissions
 
 Navigation:
   back                       Go back
