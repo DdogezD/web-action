@@ -416,6 +416,7 @@ impl BrowserManager {
         }
 
         let ignore_https_errors = options.ignore_https_errors;
+        let headless = options.headless;
         let user_agent = options.user_agent.clone();
         let color_scheme = options.color_scheme.clone();
         let download_path = options.download_path.clone();
@@ -482,6 +483,27 @@ impl BrowserManager {
                     Some(&session_id),
                 )
                 .await;
+        } else if headless {
+            // Headless Chrome adds "HeadlessChrome/" to the UA string which
+            // is an obvious bot signal.  Strip it via CDP so it takes effect
+            // across all JS contexts and HTTP headers.
+            if let Ok(version) = manager
+                .client
+                .send_command_no_params("Browser.getVersion", None)
+                .await
+            {
+                if let Some(raw) = version.get("userAgent").and_then(|v| v.as_str()) {
+                    let clean = raw.replace("HeadlessChrome", "Chrome");
+                    let _ = manager
+                        .client
+                        .send_command(
+                            "Emulation.setUserAgentOverride",
+                            Some(json!({ "userAgent": clean })),
+                            Some(&session_id),
+                        )
+                        .await;
+                }
+            }
         }
 
         if let Some(ref scheme) = color_scheme {
