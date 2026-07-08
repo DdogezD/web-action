@@ -12,7 +12,8 @@ use tokio::signal;
 use tokio::sync::{mpsc, Notify, RwLock};
 
 use super::actions::{
-    auto_save_restore_state, close_current_browser, execute_command, DaemonState,
+    auto_save_restore_state, close_current_browser, execute_command, maybe_autosave_restore_state,
+    DaemonState,
 };
 use super::cdp::client::CdpClient;
 use super::state;
@@ -122,12 +123,15 @@ pub async fn run_daemon(session: &str) {
         .and_then(|s| s.parse::<u64>().ok())
         .filter(|&ms| ms > 0);
 
+    let autosave_interval_ms = autosave_interval_ms_from_env();
+
     let result = run_socket_server(
         &socket_path,
         session,
         stream_client,
         stream_server_instance,
         idle_timeout_ms,
+        autosave_interval_ms,
     )
     .await;
 
@@ -152,6 +156,15 @@ pub async fn run_daemon(session: &str) {
     }
 }
 
+/// Minimum ms between periodic session autosaves while the browser is open.
+/// Defaults to 30s; 0 disables periodic autosave (save-on-close still runs).
+fn autosave_interval_ms_from_env() -> u64 {
+    env::var("AGENT_BROWSER_AUTOSAVE_INTERVAL_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(30_000)
+}
+
 #[cfg(unix)]
 async fn run_socket_server(
     socket_path: &PathBuf,
@@ -159,6 +172,7 @@ async fn run_socket_server(
     stream_client: Option<Arc<RwLock<Option<Arc<CdpClient>>>>>,
     stream_server: Option<Arc<StreamServer>>,
     idle_timeout_ms: Option<u64>,
+    autosave_interval_ms: u64,
 ) -> Result<(), String> {
     use tokio::net::UnixListener;
 
@@ -219,6 +233,7 @@ async fn run_socket_server(
                     let _ = close_current_browser(&mut s).await;
                 } else if s.browser.is_some() {
                     s.drain_cdp_events_background().await;
+                    maybe_autosave_restore_state(&mut s, autosave_interval_ms).await;
                 }
             }
             _ = async {
@@ -262,6 +277,7 @@ async fn run_socket_server(
     stream_client: Option<Arc<RwLock<Option<Arc<CdpClient>>>>>,
     stream_server: Option<Arc<StreamServer>>,
     idle_timeout_ms: Option<u64>,
+    autosave_interval_ms: u64,
 ) -> Result<(), String> {
     use tokio::net::TcpListener;
 
@@ -301,6 +317,12 @@ async fn run_socket_server(
     let idle_sleep = idle_timeout_ms.map(|ms| tokio::time::sleep(Duration::from_millis(ms)));
     let mut idle_sleep_pin = idle_sleep.map(Box::pin);
 
+    // Mirror the unix loop's background tick: reap a browser the user closed
+    // by hand, and drain CDP events (dialog state in particular) before
+    // autosave so a save never runs against a dialog-blocked renderer.
+    let mut drain_interval = tokio::time::interval(Duration::from_millis(100));
+    drain_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
     loop {
         tokio::select! {
             accept_result = listener.accept() => {
@@ -317,6 +339,20 @@ async fn run_socket_server(
                     Err(e) => {
                         let _ = writeln!(std::io::stderr(), "Accept error: {}", e);
                     }
+                }
+            }
+            _ = drain_interval.tick() => {
+                let mut s = state.lock().await;
+                let process_exited = s
+                    .browser
+                    .as_mut()
+                    .map(|mgr| mgr.has_process_exited())
+                    .unwrap_or(false);
+                if process_exited {
+                    let _ = close_current_browser(&mut s).await;
+                } else if s.browser.is_some() {
+                    s.drain_cdp_events_background().await;
+                    maybe_autosave_restore_state(&mut s, autosave_interval_ms).await;
                 }
             }
             _ = async {
