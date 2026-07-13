@@ -557,7 +557,8 @@ pub fn parse_flags(args: &[String]) -> Flags {
             .or(config.allowed_domains),
         action_policy: env::var("WEB_ACTION_ACTION_POLICY")
             .ok()
-            .or(config.action_policy),
+            .or(config.action_policy)
+            .or_else(|| env::var("WEB_ACTION_POLICY").ok()),
         confirm_actions: env::var("WEB_ACTION_CONFIRM_ACTIONS")
             .ok()
             .or(config.confirm_actions),
@@ -1831,6 +1832,26 @@ mod tests {
     fn test_no_auto_dialog_flag() {
         let flags = parse_flags(&args("open example.com --no-auto-dialog"));
         assert!(flags.no_auto_dialog);
+    }
+
+    #[test]
+    fn test_legacy_action_policy_env_is_used_when_modern_env_is_unset() {
+        let guard = EnvGuard::new(&["WEB_ACTION_ACTION_POLICY", "WEB_ACTION_POLICY"]);
+        guard.remove("WEB_ACTION_ACTION_POLICY");
+        guard.set("WEB_ACTION_POLICY", "/tmp/legacy-policy.json");
+
+        let flags = parse_flags(&args("snapshot"));
+        assert_eq!(flags.action_policy.as_deref(), Some("/tmp/legacy-policy.json"));
+    }
+
+    #[test]
+    fn test_modern_action_policy_env_overrides_legacy_env() {
+        let guard = EnvGuard::new(&["WEB_ACTION_ACTION_POLICY", "WEB_ACTION_POLICY"]);
+        guard.set("WEB_ACTION_ACTION_POLICY", "/tmp/modern-policy.json");
+        guard.set("WEB_ACTION_POLICY", "/tmp/legacy-policy.json");
+
+        let flags = parse_flags(&args("snapshot"));
+        assert_eq!(flags.action_policy.as_deref(), Some("/tmp/modern-policy.json"));
     }
 
     #[test]

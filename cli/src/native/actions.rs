@@ -16,12 +16,12 @@ use super::auth;
 use super::browser::{should_track_target, BrowserManager, WaitUntil};
 use super::cdp::chrome::LaunchOptions;
 use super::cdp::client::CdpClient;
+use super::cdp::types::generated::cdp_browser::PermissionSetting;
 use super::cdp::types::{
     AttachToTargetParams, AttachToTargetResult, CdpEvent, CreateTargetResult,
     DispatchMouseEventParams, ExceptionThrownEvent, JavascriptDialogOpeningEvent,
     TargetCreatedEvent, TargetDestroyedEvent, TargetInfoChangedEvent,
 };
-use super::cdp::types::generated::cdp_browser::PermissionSetting;
 use super::cookies;
 use super::diff;
 use super::element::RefMap;
@@ -340,7 +340,15 @@ pub struct DaemonState {
 }
 
 impl DaemonState {
+    /// Construct policy-free state for unit tests. Production daemon startup
+    /// must inject the policy it validated before publishing readiness state.
+    #[cfg(test)]
     pub fn new() -> Self {
+        Self::new_with_policy(None)
+    }
+
+    /// Create state with a policy that was already validated by daemon startup.
+    pub fn new_with_policy(policy: Option<ActionPolicy>) -> Self {
         Self {
             browser: None,
             appium: None,
@@ -374,7 +382,7 @@ impl DaemonState {
             recording_state: RecordingState::new(),
             event_rx: None,
             screencasting: false,
-            policy: ActionPolicy::load_if_exists(),
+            policy,
             pending_confirmation: None,
             har_recording: false,
             har_entries: Vec::new(),
@@ -428,13 +436,13 @@ impl DaemonState {
         self.mouse_state = MouseState::default();
     }
 
-    /// Create state with an optional stream client slot and server instance
-    /// (for daemon startup with stream server).
-    pub fn new_with_stream(
+    /// Create stream-backed state with a policy validated before daemon setup.
+    pub fn new_with_stream_and_policy(
         stream_client: Option<Arc<RwLock<Option<Arc<CdpClient>>>>>,
         stream_server: Option<Arc<StreamServer>>,
+        policy: Option<ActionPolicy>,
     ) -> Self {
-        let mut s = Self::new();
+        let mut s = Self::new_with_policy(policy);
         if stream_server.is_some() {
             s.request_tracking = true;
         }
@@ -1603,31 +1611,6 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
         return resp;
     }
 
-    if let Some(ref server) = state.stream_server {
-        let mut broadcast_cmd;
-        let has_internal_fields = cmd.get("plugins").is_some()
-            || cmd.get("restoreKey").is_some()
-            || cmd.get("restoreSave").is_some()
-            || cmd.get("restoreCheckUrl").is_some()
-            || cmd.get("restoreCheckText").is_some()
-            || cmd.get("restoreCheckFn").is_some();
-        let cmd_for_broadcast = if has_internal_fields {
-            broadcast_cmd = cmd.clone();
-            if let Some(obj) = broadcast_cmd.as_object_mut() {
-                obj.remove("plugins");
-                obj.remove("restoreKey");
-                obj.remove("restoreSave");
-                obj.remove("restoreCheckUrl");
-                obj.remove("restoreCheckText");
-                obj.remove("restoreCheckFn");
-            }
-            &broadcast_cmd
-        } else {
-            cmd
-        };
-        server.broadcast_command(action, &id, cmd_for_broadcast);
-    }
-
     // Drain and apply pending CDP events (console, errors, screencast frames, target lifecycle)
     state.drain_cdp_events_background().await;
 
@@ -1658,9 +1641,12 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
     let mut lifecycle_relaunched_browser = false;
     let policy_actions = policy_actions_for_command(cmd, action, needs_launch);
 
-    // Hot-reload and check action policy
+    // Hot-reload and check action policy. Reload failures retain the last
+    // valid in-memory policy but reject this command until the file is repaired.
     if let Some(ref mut policy) = state.policy {
-        let _ = policy.reload();
+        if let Err(e) = policy.reload() {
+            return error_response(&id, &e);
+        }
         let mut confirmation_required: Option<String> = None;
         for policy_action in &policy_actions {
             match policy.check(policy_action) {
@@ -1723,6 +1709,34 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
                 }
             }
         }
+    }
+
+    // Only publish command payloads after policy authorization succeeds. This
+    // keeps denied, unreloadable, and confirmation-pending commands out of the
+    // stream event feed, where they may contain sensitive input values.
+    if let Some(ref server) = state.stream_server {
+        let mut broadcast_cmd;
+        let has_internal_fields = cmd.get("plugins").is_some()
+            || cmd.get("restoreKey").is_some()
+            || cmd.get("restoreSave").is_some()
+            || cmd.get("restoreCheckUrl").is_some()
+            || cmd.get("restoreCheckText").is_some()
+            || cmd.get("restoreCheckFn").is_some();
+        let cmd_for_broadcast = if has_internal_fields {
+            broadcast_cmd = cmd.clone();
+            if let Some(obj) = broadcast_cmd.as_object_mut() {
+                obj.remove("plugins");
+                obj.remove("restoreKey");
+                obj.remove("restoreSave");
+                obj.remove("restoreCheckUrl");
+                obj.remove("restoreCheckText");
+                obj.remove("restoreCheckFn");
+            }
+            &broadcast_cmd
+        } else {
+            cmd
+        };
+        server.broadcast_command(action, &id, cmd_for_broadcast);
     }
 
     let restore_transition_closed_browser =
@@ -9787,6 +9801,7 @@ fn error_response(id: &str, error: &str) -> Value {
 mod tests {
     use super::*;
     use crate::test_utils::EnvGuard;
+    use futures_util::StreamExt;
     use std::fs;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -10186,6 +10201,122 @@ mod tests {
         assert_eq!(resp["success"], false);
         assert!(resp["error"].as_str().unwrap().contains("read"));
         assert!(state.browser.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_policy_reload_failure_rejects_command_and_recovers_after_repair() {
+        let dir = tempfile::tempdir().unwrap();
+        let policy_path = dir.path().join("policy.json");
+        fs::write(&policy_path, r#"{"deny":["navigate"]}"#).unwrap();
+
+        let mut state = DaemonState::new();
+        state.policy = Some(ActionPolicy::load(policy_path.to_str().unwrap()).unwrap());
+        let cmd = json!({
+            "action": "read",
+            "id": "policy-reload-failure",
+            "url": "https://example.com/docs"
+        });
+
+        fs::write(&policy_path, "not json").unwrap();
+        let failed = execute_command(&cmd, &mut state).await;
+        assert_eq!(failed["success"], false);
+        assert!(failed["error"]
+            .as_str()
+            .unwrap()
+            .contains("Failed to reload action policy"));
+        assert!(state.browser.is_none());
+
+        fs::write(&policy_path, r#"{"deny":["read"]}"#).unwrap();
+        let repaired = execute_command(&cmd, &mut state).await;
+        assert_eq!(repaired["success"], false);
+        assert!(repaired["error"].as_str().unwrap().contains("read"));
+        assert!(state.browser.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_policy_denial_does_not_broadcast_command_payload() {
+        let dir = tempfile::tempdir().unwrap();
+        let policy_path = dir.path().join("policy.json");
+        fs::write(&policy_path, r#"{"deny":["read"]}"#).unwrap();
+        let (server, _) = StreamServer::start_without_client(0, "policy-stream".to_string(), false)
+            .await
+            .unwrap();
+        let port = server.port();
+        let mut ws = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .unwrap()
+            .0;
+
+        let _ = tokio::time::timeout(tokio::time::Duration::from_secs(1), ws.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+
+        let mut state = DaemonState::new();
+        state.policy = Some(ActionPolicy::load(policy_path.to_str().unwrap()).unwrap());
+        state.stream_server = Some(Arc::new(server));
+        let response = execute_command(
+            &json!({
+                "action": "read",
+                "id": "policy-no-broadcast",
+                "url": "https://example.com",
+                "text": "sensitive payload"
+            }),
+            &mut state,
+        )
+        .await;
+
+        assert_eq!(response["success"], false);
+        assert!(tokio::time::timeout(tokio::time::Duration::from_millis(150), ws.next())
+            .await
+            .is_err());
+        state.stream_server.take().unwrap().shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn test_policy_reload_failure_does_not_broadcast_command_payload() {
+        let dir = tempfile::tempdir().unwrap();
+        let policy_path = dir.path().join("policy.json");
+        fs::write(&policy_path, r#"{"deny":["navigate"]}"#).unwrap();
+        let (server, _) = StreamServer::start_without_client(0, "policy-reload-stream".to_string(), false)
+            .await
+            .unwrap();
+        let port = server.port();
+        let mut ws = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .unwrap()
+            .0;
+        let _ = tokio::time::timeout(tokio::time::Duration::from_secs(1), ws.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+
+        let mut state = DaemonState::new();
+        state.policy = Some(ActionPolicy::load(policy_path.to_str().unwrap()).unwrap());
+        state.stream_server = Some(Arc::new(server));
+        fs::write(&policy_path, "not json").unwrap();
+        let response = execute_command(
+            &json!({
+                "action": "read",
+                "id": "policy-reload-no-broadcast",
+                "url": "https://example.com",
+                "text": "sensitive payload"
+            }),
+            &mut state,
+        )
+        .await;
+
+        assert_eq!(response["success"], false);
+        assert!(response["error"]
+            .as_str()
+            .unwrap()
+            .contains("Failed to reload action policy"));
+        assert!(tokio::time::timeout(tokio::time::Duration::from_millis(150), ws.next())
+            .await
+            .is_err());
+        state.stream_server.take().unwrap().shutdown().await;
     }
 
     #[tokio::test]

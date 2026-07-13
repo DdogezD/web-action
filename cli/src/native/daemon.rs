@@ -15,11 +15,23 @@ use super::actions::{
     auto_save_restore_state, close_current_browser, execute_command, DaemonState,
 };
 use super::cdp::client::CdpClient;
+use super::policy::ActionPolicy;
 use super::state;
 use super::stream::StreamServer;
 use crate::connection::INTERNAL_DAEMON_SHUTDOWN_ACTION;
 
 pub async fn run_daemon(session: &str) {
+    // Validate an explicitly configured policy before publishing daemon
+    // sidecars or redirecting stderr, so startup fails closed with a useful
+    // diagnostic that the CLI can surface.
+    let policy = match ActionPolicy::load_from_env() {
+        Ok(policy) => policy,
+        Err(e) => {
+            let _ = writeln!(std::io::stderr(), "{}", e);
+            process::exit(1);
+        }
+    };
+
     let socket_dir = get_daemon_socket_dir();
     if !socket_dir.exists() {
         let _ = fs::create_dir_all(&socket_dir);
@@ -127,6 +139,7 @@ pub async fn run_daemon(session: &str) {
         session,
         stream_client,
         stream_server_instance,
+        policy,
         idle_timeout_ms,
     )
     .await;
@@ -158,6 +171,7 @@ async fn run_socket_server(
     session: &str,
     stream_client: Option<Arc<RwLock<Option<Arc<CdpClient>>>>>,
     stream_server: Option<Arc<StreamServer>>,
+    policy: Option<ActionPolicy>,
     idle_timeout_ms: Option<u64>,
 ) -> Result<(), String> {
     use tokio::net::UnixListener;
@@ -172,9 +186,10 @@ async fn run_socket_server(
         None
     };
 
-    let state: std::sync::Arc<tokio::sync::Mutex<DaemonState>> = std::sync::Arc::new(
-        tokio::sync::Mutex::new(DaemonState::new_with_stream(stream_client, stream_server)),
-    );
+    let state: std::sync::Arc<tokio::sync::Mutex<DaemonState>> =
+        std::sync::Arc::new(tokio::sync::Mutex::new(
+            DaemonState::new_with_stream_and_policy(stream_client, stream_server, policy),
+        ));
 
     let (reset_tx, mut reset_rx) = mpsc::channel::<()>(64);
     let reset_tx = idle_timeout_ms.map(|_| Arc::new(reset_tx));
@@ -261,6 +276,7 @@ async fn run_socket_server(
     session: &str,
     stream_client: Option<Arc<RwLock<Option<Arc<CdpClient>>>>>,
     stream_server: Option<Arc<StreamServer>>,
+    policy: Option<ActionPolicy>,
     idle_timeout_ms: Option<u64>,
 ) -> Result<(), String> {
     use tokio::net::TcpListener;
@@ -289,9 +305,10 @@ async fn run_socket_server(
         None
     };
 
-    let state: std::sync::Arc<tokio::sync::Mutex<DaemonState>> = std::sync::Arc::new(
-        tokio::sync::Mutex::new(DaemonState::new_with_stream(stream_client, stream_server)),
-    );
+    let state: std::sync::Arc<tokio::sync::Mutex<DaemonState>> =
+        std::sync::Arc::new(tokio::sync::Mutex::new(
+            DaemonState::new_with_stream_and_policy(stream_client, stream_server, policy),
+        ));
 
     let (reset_tx, mut reset_rx) = mpsc::channel::<()>(64);
     let reset_tx = idle_timeout_ms.map(|_| Arc::new(reset_tx));
