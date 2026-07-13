@@ -57,7 +57,7 @@ SESSION="$(web-action session id --scope worktree --prefix next-dev-loop)"
 web-action --session "$SESSION" --restore open https://app.example.com/dashboard
 ```
 
-State is loaded before navigation and saved on close, daemon shutdown, idle timeout, and compatible relaunch. The default save policy is `--restore-save auto`, which skips auto-save if restore failed or validation failed.
+State is loaded before navigation and saved on close, daemon shutdown, idle timeout, and compatible relaunch. It is also saved periodically while the browser is open (after commands settle, at most once per `WEB_ACTION_AUTOSAVE_INTERVAL_MS`, default 30000; set to `0` to save only on close), so a browser window the user closes by hand still leaves a recent save behind. Idle sessions keep saving on the same interval, capturing changes the page makes on its own such as token refreshes. The default save policy is `--restore-save auto`, which skips auto-save if restore failed or validation failed; `never` disables periodic autosave too.
 
 ```bash
 web-action --session "$SESSION" --restore --restore-check-url "**/dashboard" open https://app.example.com/dashboard

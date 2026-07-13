@@ -63,6 +63,8 @@ web-action open https://mail.google.com  # Still logged in!
 
 Profile directory: `~/.web-action/profiles/main/`
 
+When using `--restore`, state is saved when the browser closes and periodically while it remains open. Periodic autosave waits for commands to settle and runs at most once per `WEB_ACTION_AUTOSAVE_INTERVAL_MS` (default: `30000`; set to `0` to save only on close). It respects the `--restore-save` policy.
+
 ## Cross-Frame Interaction (`--frame`)
 
 When elements live inside an iframe, use `--frame` to target them with CSS selectors without manually switching frames:
@@ -209,6 +211,7 @@ web-action kill                    # Kill daemon + close browser
 | `WEB_ACTION_SOCKET_DIR` | Override IPC directory | `~/.web-action` |
 | `WEB_ACTION_PROFILE` | Custom profile directory | `~/.web-action/profiles/main/` |
 | `WEB_ACTION_IDLE_TIMEOUT_MS` | Daemon auto-shutdown (ms) | (disabled) |
+| `WEB_ACTION_AUTOSAVE_INTERVAL_MS` | Minimum time between periodic restore-state saves (ms; `0` disables) | `30000` |
 
 ### Directory Layout
 

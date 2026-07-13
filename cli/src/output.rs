@@ -3599,6 +3599,7 @@ Environment:
   WEB_ACTION_NAMESPACE        Namespace for daemon sockets and restore state
   WEB_ACTION_RESTORE          Auto-save/restore persistence key
   WEB_ACTION_RESTORE_SAVE     Restore save policy: auto, always, never
+  WEB_ACTION_AUTOSAVE_INTERVAL_MS Min ms between periodic session autosaves (default: 30000, 0 disables)
   WEB_ACTION_RESTORE_CHECK_URL URL pattern restored state must match
   WEB_ACTION_RESTORE_CHECK_TEXT Page text restored state must contain
   WEB_ACTION_RESTORE_CHECK_FN JS expression restored state must satisfy
